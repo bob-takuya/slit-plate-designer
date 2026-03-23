@@ -6,8 +6,9 @@
   <title>Slit Plate Designer</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: 'Segoe UI', system-ui, sans-serif; background: #1a1a2e; color: #e0e0e0; display: flex; height: 100vh; overflow: hidden; }
-    #sidebar { width: 320px; background: #16213e; padding: 16px; overflow-y: auto; flex-shrink: 0; border-right: 1px solid #0f3460; }
+
+    /* ===== 共通 ===== */
+    body { font-family: 'Segoe UI', system-ui, sans-serif; background: #1a1a2e; color: #e0e0e0; }
     #sidebar h1 { font-size: 16px; font-weight: 700; color: #e94560; margin-bottom: 16px; letter-spacing: 1px; text-transform: uppercase; }
     #sidebar h2 { font-size: 12px; font-weight: 600; color: #a0a0c0; margin: 16px 0 8px; text-transform: uppercase; letter-spacing: 0.5px; }
     .field { margin-bottom: 10px; }
@@ -23,20 +24,35 @@
     #stats { background: #0f3460; border-radius: 6px; padding: 10px; font-size: 12px; line-height: 1.8; color: #a0c4ff; margin-bottom: 12px; }
     #stats span { color: #e0e0e0; font-weight: 600; }
     #log { background: #0a0a1a; border-radius: 4px; padding: 8px; font-size: 11px; color: #60a060; font-family: monospace; height: 80px; overflow-y: auto; margin-top: 8px; }
-    #sidebar { transition: width 0.25s ease, padding 0.25s ease; }
-    #sidebar.collapsed { width: 0; padding: 0; overflow: hidden; border-right: none; }
-    #sidebar-toggle { position: absolute; top: 10px; left: 10px; z-index: 10; width: 32px; height: 32px; background: #16213e; border: 1px solid #0f3460; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 16px; color: #a0a0c0; transition: left 0.25s ease; }
-    #sidebar-toggle:hover { background: #0f3460; color: #e0e0e0; }
-    body.sidebar-open #sidebar-toggle { left: 330px; }
-    #main { flex: 1; position: relative; }
-    #canvas3d { width: 100%; height: 100%; display: block; }
     #topview-canvas { display: none; }
-    #overlay { position: absolute; top: 10px; right: 10px; background: rgba(22,33,62,0.85); padding: 8px 12px; border-radius: 6px; font-size: 11px; color: #a0a0c0; line-height: 1.6; }
     .tab-bar { display: flex; gap: 4px; margin-bottom: 12px; }
     .tab { flex: 1; padding: 6px; background: #0f3460; border: 1px solid #1a4a8a; border-radius: 4px; cursor: pointer; font-size: 11px; text-align: center; color: #a0a0c0; }
     .tab.active { background: #e94560; border-color: #e94560; color: white; }
     .section { display: none; }
     .section.active { display: block; }
+
+    /* ===== デスクトップ（641px以上）: 横並び ===== */
+    @media (min-width: 641px) {
+      body { display: flex; height: 100vh; overflow: hidden; position: relative; }
+      #sidebar { width: 320px; background: #16213e; padding: 16px; overflow-y: auto; flex-shrink: 0; border-right: 1px solid #0f3460; transition: width 0.25s ease, padding 0.25s ease; }
+      #sidebar.collapsed { width: 0; padding: 0; overflow: hidden; border-right: none; }
+      #sidebar-toggle { display: flex; position: absolute; top: 10px; left: 10px; z-index: 10; width: 32px; height: 32px; background: #16213e; border: 1px solid #0f3460; border-radius: 6px; cursor: pointer; align-items: center; justify-content: center; font-size: 16px; color: #a0a0c0; transition: left 0.25s ease; }
+      #sidebar-toggle:hover { background: #0f3460; color: #e0e0e0; }
+      body.sidebar-open #sidebar-toggle { left: 330px; }
+      #main { flex: 1; position: relative; }
+      #canvas3d { width: 100%; height: 100%; display: block; }
+      #overlay { position: absolute; top: 10px; right: 10px; background: rgba(22,33,62,0.85); padding: 8px 12px; border-radius: 6px; font-size: 11px; color: #a0a0c0; line-height: 1.6; }
+    }
+
+    /* ===== モバイル（640px以下）: 縦並び（設定 → ビューワー）===== */
+    @media (max-width: 640px) {
+      body { display: flex; flex-direction: column; min-height: 100vh; }
+      #sidebar-toggle { display: none; }
+      #sidebar { width: 100%; background: #16213e; padding: 16px; overflow-y: visible; border-bottom: 1px solid #0f3460; }
+      #main { width: 100%; height: 70vw; min-height: 280px; max-height: 480px; position: relative; flex-shrink: 0; }
+      #canvas3d { width: 100%; height: 100%; display: block; }
+      #overlay { position: absolute; bottom: 8px; left: 8px; background: rgba(22,33,62,0.85); padding: 6px 10px; border-radius: 6px; font-size: 10px; color: #a0a0c0; line-height: 1.5; }
+    }
   </style>
 </head>
 <body class="sidebar-open">
@@ -124,6 +140,16 @@ function toggleSidebar() {
     }
   }, 300);
 }
+
+function resizeRenderer() {
+  if (window.renderer && window.camera) {
+    const main = document.getElementById('main');
+    window.renderer.setSize(main.clientWidth, main.clientHeight);
+    window.camera.aspect = main.clientWidth / main.clientHeight;
+    window.camera.updateProjectionMatrix();
+  }
+}
+window.addEventListener('resize', resizeRenderer);
 
 function switchTab(name) {
   document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', ['params','export'][i]===name));
