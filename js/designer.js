@@ -301,141 +301,140 @@ function largestComponent(plates) {
 let PLATES = [];
 
 async function runOptimize() {
-  const size = +document.getElementById('plateSize').value;
-  const thick = +document.getElementById('plateThick').value;
+  const size   = +document.getElementById('plateSize').value;
+  const thick  = +document.getElementById('plateThick').value;
   const radius = +document.getElementById('targetRadius').value;
-  const shape = document.getElementById('targetShape').value;
+  const shape  = document.getElementById('targetShape').value;
   const densityHint = +document.getElementById('density').value;
   const slitTol = +document.getElementById('slitTol').value;
-  const cylH = +document.getElementById('cylHeight').value;
+  const cylH   = +document.getElementById('cylHeight').value;
 
   document.getElementById('log').textContent = '';
-  LOG('Phase 1: Generating candidate plates...');
 
-  // --- 1. Dense candidate set on target surface ---
-  // Use 3× the requested density, then greedily prune
-  const nCandidates = densityHint * 3;
-  let rawPts;
-  if (shape === 'sphere') {
-    rawPts = fibonacciSphere(nCandidates).map(p => scale(p, radius));
-  } else if (shape === 'hemisphere') {
-    rawPts = fibonacciSphere(nCandidates * 2)
-      .filter(p => p.y >= -0.05)
-      .slice(0, nCandidates)
-      .map(p => scale(normalize(p), radius));
-  } else {
-    // cylinder
-    rawPts = [];
-    for (let i = 0; i < nCandidates; i++) {
-      const theta = (i / nCandidates) * Math.PI * 2;
-      const y = (Math.random() - 0.5) * cylH;
-      rawPts.push(new V3(radius * Math.cos(theta), y, radius * Math.sin(theta)));
-    }
-  }
-
-  // --- 2. Build plates with FREE normals (tangent to surface) ---
-  const candidates = rawPts.map((p, i) => {
-    let normal;
-    if (shape === 'cylinder') {
-      // Normal points radially outward in XZ plane
-      normal = normalize(new V3(p.x, 0, p.z));
-    } else {
-      // Normal = outward radial direction (sphere/hemisphere)
-      normal = normalize(p);
-    }
-    return new Plate(i, p, normal, size, thick);
-  });
-  LOG(`${candidates.length} candidates generated`);
-
-  // --- 3. Greedy plate selection under hard constraints ---
-  // For each candidate (in random order), try to add it.
-  // Hard constraints:
-  //   C1: No physical interference with already-placed plates
-  //       UNLESS a valid slit connection can be established.
-  //   C2: Slit connections only when normals are ~perpendicular (|dot| < 0.15).
-  //   C3: Slit geometry must be valid (entry on edge, exit interior, no slit overlap).
-  //   C4: Final set must be a single connected component.
+  // ================================================================
+  // DESIGN: Checkerboard UV-grid with two perpendicular normal families
   //
-  // We relax C4 to post-processing (keep largest component).
+  // Root-cause of the "1 plate" bug in v2:
+  //   All plates had radially-outward normals → nearby plates always have
+  //   similar (nearly parallel) normals → perpendicularity check fails →
+  //   every candidate that touches an existing plate gets rejected.
+  //
+  // Fix: arrange plates in a checkerboard UV-grid where
+  //   even cells → phiTangent normal
+  //   odd cells  → thetaTangent normal
+  //
+  // phiTangent ⊥ thetaTangent at every sphere point, so adjacent
+  // (different-parity) cells always satisfy |dot| < 0.15.
+  // ================================================================
 
-  // Shuffle to avoid systematic bias
-  const shuffled = [...candidates].sort(() => Math.random() - 0.5);
-  const placed = []; // Plate[]
-  const placedMap = new Map(); // id → Plate
+  const nU = Math.max(3, Math.round(Math.sqrt(densityHint * 1.6)));
+  const nV = Math.max(3, Math.round(densityHint * 1.6 / nU));
+  LOG(`Grid: ${nU}×${nV} = ${nU*nV} candidates (checkerboard)`);
 
-  LOG('Phase 2: Greedy placement (strict interference check)...');
-  let skipped = 0;
+  let idCtr = 0;
+  const grid = []; // grid[ui][vi] = Plate
 
-  for (const cand of shuffled) {
-    // Check against all placed plates
-    let canPlace = true;
-    const pendingSlitsA = []; // slits to add to cand
-    const pendingSlitsB = []; // [{plate, slit}] to add to placed plates
-    const pendingNeighbors = []; // pairs to connect
+  for (let ui = 0; ui < nU; ui++) {
+    const col = [];
+    for (let vi = 0; vi < nV; vi++) {
+      let center, phiTan, thetaTan;
 
-    for (const existing of placed) {
-      const interfere = platesInterfere(cand, existing);
-      if (!interfere) continue; // no overlap → fine
+      if (shape === 'sphere' || shape === 'hemisphere') {
+        const phiMax = shape === 'hemisphere' ? Math.PI / 2 : Math.PI;
+        const theta = (ui / nU) * Math.PI * 2;
+        // avoid poles: remap vi to [0.1π … 0.9π] for sphere
+        const tNorm = (vi + 0.5) / nV;
+        const phi = shape === 'hemisphere'
+          ? tNorm * phiMax * 0.95 + 0.05  // 0.05 … 0.95·(π/2)
+          : tNorm * Math.PI * 0.8 + 0.1 * Math.PI; // 0.1π … 0.9π
 
-      // OBBs overlap. Check if we can resolve with a slit joint.
-      const perp = Math.abs(dot(cand.normal, existing.normal)) < 0.15;
-      if (!perp) {
-        // Not perpendicular → can't make slit joint → skip this candidate
-        canPlace = false; break;
+        const sP = Math.sin(phi), cP = Math.cos(phi);
+        const sT = Math.sin(theta), cT = Math.cos(theta);
+
+        center   = new V3(sP * cT * radius, cP * radius, sP * sT * radius);
+        phiTan   = normalize(new V3(cP * cT, -sP, cP * sT));   // d/dφ
+        thetaTan = normalize(new V3(-sT, 0, cT));               // d/dθ
+        // phiTan · thetaTan = cP·cT·(-sT) + 0 + cP·sT·cT = 0 ✓
+
+      } else { // cylinder
+        const theta = (ui / nU) * Math.PI * 2;
+        const y = ((vi + 0.5) / nV - 0.5) * cylH;
+        center   = new V3(Math.cos(theta) * radius, y, Math.sin(theta) * radius);
+        thetaTan = normalize(new V3(-Math.sin(theta), 0, Math.cos(theta))); // azimuthal
+        phiTan   = new V3(0, 1, 0);                                         // axial
+        // thetaTan · phiTan = 0 ✓
       }
 
-      // Try to compute slit
-      const result = computeSlits(cand, existing, slitTol);
-      if (!result) {
-        // Geometry doesn't work out → can't resolve → skip
-        canPlace = false; break;
-      }
-      const { slitA, slitB } = result;
-
-      // Check slit overlap with existing slits on cand
-      let overlap = false;
-      for (const s of pendingSlitsA) { if (slitsOverlap(s, slitA)) { overlap = true; break; } }
-      if (!overlap) for (const s of existing.slits) { if (slitsOverlap(s, slitB)) { overlap = true; break; } }
-      if (overlap) { canPlace = false; break; }
-
-      pendingSlitsA.push(slitA);
-      pendingSlitsB.push({ plate: existing, slit: slitB });
-      pendingNeighbors.push(existing);
+      // Checkerboard: alternate normal family
+      const normal = (ui + vi) % 2 === 0 ? phiTan : thetaTan;
+      const p = new Plate(idCtr++, center, normal, size, thick);
+      p._ui = ui; p._vi = vi;
+      col.push(p);
     }
-
-    if (!canPlace) { skipped++; continue; }
-
-    // Commit: add cand with its resolved slits
-    for (const s of pendingSlitsA) cand.slits.push(s);
-    for (const { plate, slit } of pendingSlitsB) plate.slits.push(slit);
-    for (const nb of pendingNeighbors) {
-      cand.neighbors.push(nb.id);
-      nb.neighbors.push(cand.id);
-    }
-    placed.push(cand);
-    placedMap.set(cand.id, cand);
+    grid.push(col);
   }
-  LOG(`Placed: ${placed.length}, skipped: ${skipped}`);
 
-  // --- 4. Keep largest connected component ---
-  const compIds = new Set(largestComponent(placed));
-  const final = placed.filter(p => compIds.has(p.id));
+  // ---- Connect adjacent grid cells that have perpendicular normals ----
+  LOG('Connecting slit pairs...');
+  let slitsMade = 0, slitsFailed = 0;
 
-  // Clean up slits and neighbors referencing removed plates
+  // 4-connected neighbours (horizontal + vertical in grid)
+  const dirs = [[1, 0], [0, 1], [1, 1], [1, -1]]; // include diagonals for richer mesh
+
+  for (let ui = 0; ui < nU; ui++) {
+    for (let vi = 0; vi < nV; vi++) {
+      const pA = grid[ui][vi];
+      for (const [du, dv] of dirs) {
+        const nui = ui + du;
+        const nvi = ((vi + dv) + nV) % nV; // wrap in V for cylinder/sphere
+        if (nui >= nU) continue;
+
+        const pB = grid[nui][nvi];
+        // Only connect perpendicular-normal pairs
+        if (Math.abs(dot(pA.normal, pB.normal)) >= 0.15) continue;
+        // Avoid duplicate edges
+        if (pA.neighbors.includes(pB.id)) continue;
+
+        const result = computeSlits(pA, pB, slitTol);
+        if (!result) { slitsFailed++; continue; }
+        const { slitA, slitB } = result;
+
+        // Slit-overlap check
+        let overlap = false;
+        for (const s of pA.slits) { if (slitsOverlap(s, slitA)) { overlap = true; break; } }
+        if (!overlap) for (const s of pB.slits) { if (slitsOverlap(s, slitB)) { overlap = true; break; } }
+        if (overlap) { slitsFailed++; continue; }
+
+        pA.slits.push(slitA);
+        pB.slits.push(slitB);
+        pA.neighbors.push(pB.id);
+        pB.neighbors.push(pA.id);
+        slitsMade++;
+      }
+    }
+  }
+  LOG(`Slit connections: ${slitsMade}  failed: ${slitsFailed}`);
+
+  // ---- Keep plates that have at least one connection ----
+  const allPlates = grid.flat().filter(p => p.neighbors.length > 0);
+
+  // ---- Largest connected component ----
+  const compIds = new Set(largestComponent(allPlates));
+  const final = allPlates.filter(p => compIds.has(p.id));
+
   for (const p of final) {
-    p.slits = p.slits.filter(s => compIds.has(s.inserted.id));
+    p.slits    = p.slits.filter(s => compIds.has(s.inserted.id));
     p.neighbors = p.neighbors.filter(id => compIds.has(id));
   }
 
-  LOG(`Connected component: ${final.length} / ${placed.length}`);
+  LOG(`Connected component: ${final.length} / ${allPlates.length} (isolated: ${nU*nV - allPlates.length})`);
   PLATES = final;
 
-  // --- 5. Stats ---
   const totalSlits = final.reduce((a, p) => a + p.slits.length, 0);
-  STAT('st-plates', final.length);
-  STAT('st-slits', totalSlits);
-  STAT('st-connected', final.length === placed.length ? '✓ All' : `${final.length}/${placed.length}`);
-  STAT('st-coverage', ((final.length / densityHint) * 100).toFixed(0) + '%');
+  STAT('st-plates',    final.length);
+  STAT('st-slits',     totalSlits);
+  STAT('st-connected', final.length > 0 ? `✓ (${final.length})` : '✗');
+  STAT('st-coverage',  ((final.length / (nU * nV)) * 100).toFixed(0) + '%');
 
   LOG('Rendering...');
   renderScene(final);
