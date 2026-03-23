@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Slit Plate Designer</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', system-ui, sans-serif; background: #1a1a2e; color: #e0e0e0; display: flex; height: 100vh; overflow: hidden; }
+    #sidebar { width: 320px; background: #16213e; padding: 16px; overflow-y: auto; flex-shrink: 0; border-right: 1px solid #0f3460; }
+    #sidebar h1 { font-size: 16px; font-weight: 700; color: #e94560; margin-bottom: 16px; letter-spacing: 1px; text-transform: uppercase; }
+    #sidebar h2 { font-size: 12px; font-weight: 600; color: #a0a0c0; margin: 16px 0 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .field { margin-bottom: 10px; }
+    .field label { display: block; font-size: 12px; color: #a0a0c0; margin-bottom: 3px; }
+    .field input, .field select { width: 100%; padding: 6px 8px; background: #0f3460; border: 1px solid #1a4a8a; border-radius: 4px; color: #e0e0e0; font-size: 13px; }
+    .field input:focus, .field select:focus { outline: none; border-color: #e94560; }
+    button { width: 100%; padding: 8px; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 600; margin-bottom: 8px; transition: opacity 0.2s; }
+    button:hover { opacity: 0.85; }
+    #btn-optimize { background: #e94560; color: white; }
+    #btn-export-csv { background: #0f3460; color: #7ec8e3; border: 1px solid #7ec8e3; }
+    #btn-export-dxf { background: #0f3460; color: #7ec8e3; border: 1px solid #7ec8e3; }
+    #btn-export-top { background: #0f3460; color: #7ec8e3; border: 1px solid #7ec8e3; }
+    #stats { background: #0f3460; border-radius: 6px; padding: 10px; font-size: 12px; line-height: 1.8; color: #a0c4ff; margin-bottom: 12px; }
+    #stats span { color: #e0e0e0; font-weight: 600; }
+    #log { background: #0a0a1a; border-radius: 4px; padding: 8px; font-size: 11px; color: #60a060; font-family: monospace; height: 80px; overflow-y: auto; margin-top: 8px; }
+    #main { flex: 1; position: relative; }
+    #canvas3d { width: 100%; height: 100%; display: block; }
+    #topview-canvas { display: none; }
+    #overlay { position: absolute; top: 10px; right: 10px; background: rgba(22,33,62,0.85); padding: 8px 12px; border-radius: 6px; font-size: 11px; color: #a0a0c0; line-height: 1.6; }
+    .tab-bar { display: flex; gap: 4px; margin-bottom: 12px; }
+    .tab { flex: 1; padding: 6px; background: #0f3460; border: 1px solid #1a4a8a; border-radius: 4px; cursor: pointer; font-size: 11px; text-align: center; color: #a0a0c0; }
+    .tab.active { background: #e94560; border-color: #e94560; color: white; }
+    .section { display: none; }
+    .section.active { display: block; }
+  </style>
+</head>
+<body>
+<div id="sidebar">
+  <h1>Slit Plate Designer</h1>
+  <div class="tab-bar">
+    <div class="tab active" onclick="switchTab('params')">Params</div>
+    <div class="tab" onclick="switchTab('export')">Export</div>
+  </div>
+
+  <div id="tab-params" class="section active">
+    <h2>Plate</h2>
+    <div class="field"><label>Side length (mm)</label><input type="number" id="plateSize" value="100" min="10" step="5"></div>
+    <div class="field"><label>Thickness (mm)</label><input type="number" id="plateThick" value="3" min="0.5" step="0.5"></div>
+
+    <h2>Target Shape</h2>
+    <div class="field"><label>Shape</label>
+      <select id="targetShape">
+        <option value="sphere">Sphere</option>
+        <option value="hemisphere">Hemisphere</option>
+        <option value="cylinder">Cylinder</option>
+      </select>
+    </div>
+    <div class="field"><label>Radius (mm)</label><input type="number" id="targetRadius" value="300" min="50" step="10"></div>
+    <div class="field" id="cylHeight-wrap" style="display:none;"><label>Height (mm)</label><input type="number" id="cylHeight" value="200" min="50" step="10"></div>
+
+    <h2>Optimization</h2>
+    <div class="field"><label>Plate density (approx count)</label><input type="number" id="density" value="40" min="5" max="200" step="5"></div>
+    <div class="field"><label>Iterations</label><input type="number" id="iterations" value="200" min="50" max="1000" step="50"></div>
+    <div class="field"><label>Slit tolerance factor</label><input type="number" id="slitTol" value="1.05" min="1.01" max="1.2" step="0.01"></div>
+
+    <button id="btn-optimize" onclick="runOptimize()">▶ Optimize</button>
+
+    <div id="stats">
+      Plates: <span id="st-plates">—</span><br>
+      Slits: <span id="st-slits">—</span><br>
+      Connected: <span id="st-connected">—</span><br>
+      Coverage: <span id="st-coverage">—</span>
+    </div>
+    <div id="log"></div>
+  </div>
+
+  <div id="tab-export" class="section">
+    <h2>DXF Export</h2>
+    <div class="field"><label>Plates per row</label><input type="number" id="dxfCols" value="5" min="1" max="20"></div>
+    <div class="field"><label>Spacing (mm)</label><input type="number" id="dxfSpacing" value="20" min="5" step="5"></div>
+    <button id="btn-export-dxf" onclick="exportDXF()">⬇ Export DXF</button>
+
+    <h2>CSV Export</h2>
+    <button id="btn-export-csv" onclick="exportCSV()">⬇ Export CSV (normals + slits)</button>
+
+    <h2>Top View</h2>
+    <div class="field"><label>Scale (px/mm)</label><input type="number" id="topScale" value="1" min="0.1" max="5" step="0.1"></div>
+    <button id="btn-export-top" onclick="exportTopView()">⬇ Export Top View PNG</button>
+
+    <canvas id="topview-canvas"></canvas>
+  </div>
+</div>
+
+<div id="main">
+  <canvas id="canvas3d"></canvas>
+  <div id="overlay">
+    Drag: rotate &nbsp;|&nbsp; Scroll: zoom &nbsp;|&nbsp; Right drag: pan
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="js/designer.js"></script>
+<script>
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', ['params','export'][i]===name));
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.getElementById('tab-'+name).classList.add('active');
+}
+document.getElementById('targetShape').addEventListener('change', e => {
+  document.getElementById('cylHeight-wrap').style.display = e.target.value==='cylinder'?'block':'none';
+});
+</script>
+</body>
+</html>
