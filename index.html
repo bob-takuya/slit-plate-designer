@@ -23,6 +23,11 @@
     #stats { background: #0f3460; border-radius: 6px; padding: 10px; font-size: 12px; line-height: 1.8; color: #a0c4ff; margin-bottom: 12px; }
     #stats span { color: #e0e0e0; font-weight: 600; }
     #log { background: #0a0a1a; border-radius: 4px; padding: 8px; font-size: 11px; color: #60a060; font-family: monospace; height: 80px; overflow-y: auto; margin-top: 8px; }
+    #sidebar { transition: width 0.25s ease, padding 0.25s ease; }
+    #sidebar.collapsed { width: 0; padding: 0; overflow: hidden; border-right: none; }
+    #sidebar-toggle { position: absolute; top: 10px; left: 10px; z-index: 10; width: 32px; height: 32px; background: #16213e; border: 1px solid #0f3460; border-radius: 6px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 16px; color: #a0a0c0; transition: left 0.25s ease; }
+    #sidebar-toggle:hover { background: #0f3460; color: #e0e0e0; }
+    body.sidebar-open #sidebar-toggle { left: 330px; }
     #main { flex: 1; position: relative; }
     #canvas3d { width: 100%; height: 100%; display: block; }
     #topview-canvas { display: none; }
@@ -34,7 +39,8 @@
     .section.active { display: block; }
   </style>
 </head>
-<body>
+<body class="sidebar-open">
+<button id="sidebar-toggle" onclick="toggleSidebar()" title="サイドバーを開閉">◀</button>
 <div id="sidebar">
   <h1>Slit Plate Designer</h1>
   <div class="tab-bar">
@@ -101,6 +107,24 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="js/designer.js"></script>
 <script>
+function toggleSidebar() {
+  const sidebar = document.getElementById('sidebar');
+  const toggle = document.getElementById('sidebar-toggle');
+  const body = document.body;
+  sidebar.classList.toggle('collapsed');
+  body.classList.toggle('sidebar-open');
+  toggle.textContent = sidebar.classList.contains('collapsed') ? '▶' : '◀';
+  // Three.js キャンバスをリサイズ
+  setTimeout(() => {
+    if (window.renderer && window.camera) {
+      const main = document.getElementById('main');
+      window.renderer.setSize(main.clientWidth, main.clientHeight);
+      window.camera.aspect = main.clientWidth / main.clientHeight;
+      window.camera.updateProjectionMatrix();
+    }
+  }, 300);
+}
+
 function switchTab(name) {
   document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', ['params','export'][i]===name));
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
