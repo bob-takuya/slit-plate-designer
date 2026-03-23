@@ -197,48 +197,64 @@ function slitsOverlap(s1,s2) {
 }
 
 // ============================================================
-// 球面誘導: PA面内の方向 d で球面上に c_B を配置
+// 球面最小二乗近似による c_B 配置
 //
-//   c_B = c_A + r·d,  |c_B|² = R²
-//   → r² + 2p·r + q = 0  (p=c_A·d, q=|c_A|²-R²)
-//   → r = -p ± √(p²-q)
+//   c_B = c_A + α·u_A + β·v_A  (PA面上の拘束)
+//   目的: minimize (|c_B| - R)²
 //
-//   戻り値: r の値（null なら解なし or 範囲外）
+//   PA面内での球の切断円（半径 r = √(R²-dA²)）:
+//     (au+α)² + (av+β)² = R² - dA²
+//   ただし |R²-dA²| < 0 ならPA面が球と交差しない
+//
+//   φ をランダムに選び:
+//     α = r·cosφ - au,  β = r·sinφ - av
+//   → clamp([-L*0.55, L*0.55]) して最善近似
+//   → これが「拘束を満たした上での最小二乗的な解」
 // ============================================================
-function sphereGuidedR(cA, d, R, maxR) {
-  const p = vdot(cA, d);
-  const q = vdot(cA, cA) - R*R;
-  const disc = p*p - q;
-  if(disc < 0) return null;        // 球との交差なし
+function chooseCB(PA, R, L, phi) {
+  const au = vdot(PA.center, PA.u);
+  const av = vdot(PA.center, PA.v);
+  const dA = vdot(PA.center, PA.normal);
+  const r2 = R*R - dA*dA;
+  const lim = L * 0.55;
 
-  const sqD = Math.sqrt(disc);
-  const r1 = -p + sqD;
-  const r2 = -p - sqD;
-
-  // maxR以内の解を優先（|r|が小さい方）
-  const v1 = Math.abs(r1)<=maxR ? r1 : null;
-  const v2 = Math.abs(r2)<=maxR ? r2 : null;
-
-  if(v1===null && v2===null) return null;
-  if(v1===null) return v2;
-  if(v2===null) return v1;
-  return Math.abs(r1)<Math.abs(r2) ? r1 : r2;
+  let alpha, beta;
+  if(r2 > 0) {
+    const r = Math.sqrt(r2);
+    alpha = r * Math.cos(phi) - au;
+    beta  = r * Math.sin(phi) - av;
+    // クランプ（プレート面内に収める = 最小二乗近似の本質）
+    alpha = Math.max(-lim, Math.min(lim, alpha));
+    beta  = Math.max(-lim, Math.min(lim, beta));
+  } else {
+    // PA面が球外 → ランダムフォールバック
+    alpha = (rng()-0.5)*L;
+    beta  = (rng()-0.5)*L;
+  }
+  return vadd(PA.center, vadd(vscale(PA.u, alpha), vscale(PA.v, beta)));
 }
 
 // ============================================================
-// 球面誘導付きランダムグロース
+// ランダムグロース（球面最小二乗近似付き）
+//
+//   ランダム性の出所:
+//   - 最初のプレート: 法線も中心もランダム（軸アライメントなし）
+//   - n_B のθ: 完全ランダム（直交は数学で保証）
+//   - φ: 完全ランダム（PA面内の方向 → 球面の切断円上の点を選ぶ）
+//   → 人為的な摂動は一切加えない
 // ============================================================
 async function generateNetwork(N, L, T, slitTol, seed, radius) {
   rngSeed(seed);
 
-  // 最初のプレート: 球面上のランダム点・外法線方向
-  const initN = vnorm(new V3(rng()*2-1, rng()*2-1, rng()*2-1));
-  const p0 = new Plate(0, vscale(initN, radius), initN, L, T);
+  // 最初のプレート: 球面上のランダム点 + 完全ランダム法線（軸非依存）
+  const initCenter = vscale(vnorm(new V3(rng()*2-1, rng()*2-1, rng()*2-1)), radius);
+  const initNormal = vnorm(new V3(rng()*2-1, rng()*2-1, rng()*2-1)); // 球外法線ではない！
+  const p0 = new Plate(0, initCenter, initNormal, L, T);
   const plates = [p0];
   const frontier = [{plate:p0, failCount:0}];
 
   const MAX_TRIAL = 400;
-  const MAX_FAIL  = 1000;
+  const MAX_FAIL  = 800;
   let attempts=0, successes=0;
 
   LOG(`シード:${seed} / 目標:${N}枚 / 球半径:${radius}mm`);
@@ -252,31 +268,15 @@ async function generateNetwork(N, L, T, slitTol, seed, radius) {
     for(let trial=0; trial<MAX_TRIAL; trial++) {
       attempts++;
 
-      // ─── 球面誘導で c_B を決定 ───────────────────────────
-      const phi = rng()*Math.PI*2;
-      const d = vadd(vscale(PA.u, Math.cos(phi)), vscale(PA.v, Math.sin(phi)));
+      // ─── c_B: 球面への最小二乗近似 ─────────────────────
+      const phi   = rng()*Math.PI*2;   // PA面内の方向（完全ランダム）
+      const c_B   = chooseCB(PA, radius, L, phi);
 
-      let r_val = sphereGuidedR(PA.center, d, radius, L*0.55);
-      if(r_val === null) {
-        // 解なし → ランダムフォールバック（球が詰まった場合の逃げ）
-        r_val = (rng()-0.5)*L*1.1;
-      }
-      const c_B = vadd(PA.center, vscale(d, r_val));
+      // ─── n_B: θ完全ランダム（直交を数学的に保証）───────
+      // これが「軸に並行でない角度のバリエーション」
+      const theta = rng()*Math.PI*2;
+      const n_B   = vadd(vscale(PA.u, Math.cos(theta)), vscale(PA.v, Math.sin(theta)));
 
-      // ─── n_B の θ: 球外法線を基準にランダム摂動 ────────
-      // c_Bが球の中心に近い場合は純粋ランダム
-      const cLen = vlen(c_B);
-      let theta;
-      if(cLen > L*0.1) {
-        const nSphere = vscale(c_B, 1/cLen);
-        // 球外法線の u_A/v_A 成分から基準 θ を計算
-        const baseTheta = Math.atan2(vdot(nSphere, PA.v), vdot(nSphere, PA.u));
-        // ±90°以内のランダム摂動（摂動が大きいほどランダム性が増す）
-        theta = baseTheta + (rng()-0.5)*Math.PI*0.8;
-      } else {
-        theta = rng()*Math.PI*2;
-      }
-      const n_B = vadd(vscale(PA.u, Math.cos(theta)), vscale(PA.v, Math.sin(theta)));
       const PB = new Plate(plates.length, c_B, n_B, L, T);
 
       // ─── 干渉チェック（PA以外の全プレート） ─────────────
