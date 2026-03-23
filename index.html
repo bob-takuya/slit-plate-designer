@@ -66,24 +66,17 @@
 
   <div id="tab-params" class="section active">
     <h2>Plate</h2>
-    <div class="field"><label>Side length (mm)</label><input type="number" id="plateSize" value="100" min="10" step="5"></div>
+    <div class="field"><label>Side length (mm)</label><input type="number" id="plateSize" value="150" min="10" step="5"></div>
     <div class="field"><label>Thickness (mm)</label><input type="number" id="plateThick" value="3" min="0.5" step="0.5"></div>
+    <div style="font-size:11px;color:#6080a0;margin:-4px 0 10px;line-height:1.5;">接合条件: size ≥ radius × 0.5 推奨</div>
 
-    <h2>Target Shape</h2>
-    <div class="field"><label>Shape</label>
-      <select id="targetShape">
-        <option value="sphere">Sphere</option>
-        <option value="hemisphere">Hemisphere</option>
-        <option value="cylinder">Cylinder</option>
-      </select>
-    </div>
-    <div class="field"><label>Radius (mm)</label><input type="number" id="targetRadius" value="300" min="50" step="10"></div>
-    <div class="field" id="cylHeight-wrap" style="display:none;"><label>Height (mm)</label><input type="number" id="cylHeight" value="200" min="50" step="10"></div>
+    <h2>Target Sphere</h2>
+    <div class="field"><label>Radius (mm)</label><input type="number" id="targetRadius" value="200" min="50" step="10"></div>
 
     <h2>Optimization</h2>
-    <div class="field"><label>Plate density (approx count)</label><input type="number" id="density" value="40" min="5" max="200" step="5"></div>
-    <div class="field"><label>Iterations</label><input type="number" id="iterations" value="200" min="50" max="1000" step="50"></div>
+    <div class="field"><label>Max plates (upper bound)</label><input type="number" id="density" value="80" min="5" max="500" step="5"></div>
     <div class="field"><label>Slit tolerance factor</label><input type="number" id="slitTol" value="1.05" min="1.01" max="1.2" step="0.01"></div>
+    <div style="font-size:11px;color:#60a080;margin:-4px 0 10px;line-height:1.5;">拘束: 干渉ゼロ + 全連結<br>目標: 密度を自動最大化</div>
 
     <button id="btn-optimize" onclick="runOptimize()">▶ Optimize</button>
 
@@ -156,9 +149,7 @@ function switchTab(name) {
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
   document.getElementById('tab-'+name).classList.add('active');
 }
-document.getElementById('targetShape').addEventListener('change', e => {
-  document.getElementById('cylHeight-wrap').style.display = e.target.value==='cylinder'?'block':'none';
-});
+// shape selector removed (sphere only in v3)
 </script>
 </body>
 </html>
