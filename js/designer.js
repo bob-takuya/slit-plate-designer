@@ -146,27 +146,25 @@ function buildSlitOnPlate(host, inserted, linePoint, lineDir, tMin, tMax, tol) {
   const half = host.size/2;
   const wEnd   = add(linePoint, scale(lineDir, tMin));
   const wOther = add(linePoint, scale(lineDir, tMax));
-  // Midpoint of the full intersection segment.
-  // Each plate cuts only from its own edge up to this midpoint,
-  // so when the two plates interlock the cuts together span the full intersection.
-  const wMid   = scale(add(wEnd, wOther), 0.5);
   const lEnd   = host.worldToLocal(wEnd);
   const lOther = host.worldToLocal(wOther);
-  const lMid   = host.worldToLocal(wMid);
   const clamp  = p => ({ u: Math.max(-half,Math.min(half,p.u)), v: Math.max(-half,Math.min(half,p.v)) });
   const cEnd   = clamp(lEnd), cOther = clamp(lOther);
   const distToEdge = p => half - Math.max(Math.abs(p.u), Math.abs(p.v));
-  // Entry: whichever end is closer to an edge (= the edge side)
-  let entry;
-  if(distToEdge(cEnd) < distToEdge(cOther)) { entry=snapToEdge(cEnd,cOther,half); }
-  else { entry=snapToEdge(cOther,cEnd,half); }
-  // Exit: midpoint of intersection (stop here — other plate cuts the remaining half)
-  const exit = { u: lMid.u, v: lMid.v };
-  const du=exit.u-entry.u, dv=exit.v-entry.v;
-  if(Math.sqrt(du*du+dv*dv) < inserted.thick) return null;
+  const du=cOther.u-cEnd.u, dv=cOther.v-cEnd.v;
+  if(Math.sqrt(du*du+dv*dv) < inserted.thick*2) return null;
+  let entry, exit;
+  if(distToEdge(cEnd) < distToEdge(cOther)) { entry=snapToEdge(cEnd,cOther,half); exit=cOther; }
+  else { entry=snapToEdge(cOther,cEnd,half); exit=cEnd; }
   if(!host.inBounds(exit.u, exit.v, host.thick*0.5)) return null;
   if(distToEdge(entry) > host.size*0.03) return null;
   return { host, inserted, entry, exit, width: inserted.thick*tol };
+}
+
+// Cut endpoint for export/display: only the edge-side half is physically cut.
+// entry→exit spans the full half of the intersection; we draw entry→cutExit only.
+function slitCutExit(s) {
+  return { u: (s.entry.u + s.exit.u) / 2, v: (s.entry.v + s.exit.v) / 2 };
 }
 
 // ============================================================
@@ -437,13 +435,14 @@ function renderScene(plates) {
     mesh.position.copy(p.center);
     mesh.quaternion.setFromRotationMatrix(makeBasis(p.u,p.v,p.normal));
     scene.add(mesh);
-    // Slit visualization (yellow)
+    // Slit visualization (yellow) — draw only the physical cut (edge → midpoint)
     p.slits.forEach(s=>{
+      const ce=slitCutExit(s);
       const wEntry=p.localToWorld(s.entry.u,s.entry.v,0);
-      const wExit=p.localToWorld(s.exit.u,s.exit.v,0);
+      const wCut  =p.localToWorld(ce.u,ce.v,0);
       const geo2=new THREE.BufferGeometry().setFromPoints([
         new THREE.Vector3(wEntry.x,wEntry.y,wEntry.z),
-        new THREE.Vector3(wExit.x,wExit.y,wExit.z)
+        new THREE.Vector3(wCut.x,wCut.y,wCut.z)
       ]);
       scene.add(new THREE.Line(geo2,new THREE.LineBasicMaterial({color:0xffff00,linewidth:2})));
     });
@@ -485,7 +484,8 @@ function exportDXF() {
     body+=dxfRect(ox-h,oy-h,ox+h,oy+h,'PLATES');
     body+=dxfText(ox-h+2,oy+h-size*0.1,String(idx+1),'LABELS',size*0.08);
     p.slits.forEach(s=>{
-      const eu=s.entry.u+ox,ev=s.entry.v+oy,xu=s.exit.u+ox,xv=s.exit.v+oy;
+      const ce=slitCutExit(s);  // draw only to midpoint (physical cut = edge-side half)
+      const eu=s.entry.u+ox,ev=s.entry.v+oy,xu=ce.u+ox,xv=ce.v+oy;
       const du=xu-eu,dv=xv-ev,len=Math.sqrt(du*du+dv*dv);
       if(len<1e-9)return;
       const hw=s.width/2,nx=-dv/len*hw,ny=du/len*hw;
@@ -524,8 +524,9 @@ function buildSVGString() {
     s+=`<rect class="plate" x="${cx-h}" y="${cy-h}" width="${size}" height="${size}"/>\n`;
     s+=`<text class="lbl" x="${(cx-h+2).toFixed(1)}" y="${(cy-h+size*0.09).toFixed(1)}">${idx+1}</text>\n`;
     p.slits.forEach(sl=>{
+      const ce=slitCutExit(sl);  // draw only to midpoint (physical cut = edge-side half)
       const eu=sl.entry.u+cx, ev=sl.entry.v+cy;
-      const xu=sl.exit.u+cx,  xv=sl.exit.v+cy;
+      const xu=ce.u+cx,        xv=ce.v+cy;
       const du=xu-eu, dv=xv-ev, len=Math.sqrt(du*du+dv*dv);
       if(len<1e-9)return;
       const hw=sl.width/2, nx=-dv/len*hw, ny=du/len*hw;
