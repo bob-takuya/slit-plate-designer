@@ -146,16 +146,24 @@ function buildSlitOnPlate(host, inserted, linePoint, lineDir, tMin, tMax, tol) {
   const half = host.size/2;
   const wEnd   = add(linePoint, scale(lineDir, tMin));
   const wOther = add(linePoint, scale(lineDir, tMax));
+  // Midpoint of the full intersection segment.
+  // Each plate cuts only from its own edge up to this midpoint,
+  // so when the two plates interlock the cuts together span the full intersection.
+  const wMid   = scale(add(wEnd, wOther), 0.5);
   const lEnd   = host.worldToLocal(wEnd);
   const lOther = host.worldToLocal(wOther);
+  const lMid   = host.worldToLocal(wMid);
   const clamp  = p => ({ u: Math.max(-half,Math.min(half,p.u)), v: Math.max(-half,Math.min(half,p.v)) });
   const cEnd   = clamp(lEnd), cOther = clamp(lOther);
   const distToEdge = p => half - Math.max(Math.abs(p.u), Math.abs(p.v));
-  const du=cOther.u-cEnd.u, dv=cOther.v-cEnd.v;
-  if(Math.sqrt(du*du+dv*dv) < inserted.thick*2) return null;
-  let entry, exit;
-  if(distToEdge(cEnd) < distToEdge(cOther)) { entry=snapToEdge(cEnd,cOther,half); exit=cOther; }
-  else { entry=snapToEdge(cOther,cEnd,half); exit=cEnd; }
+  // Entry: whichever end is closer to an edge (= the edge side)
+  let entry;
+  if(distToEdge(cEnd) < distToEdge(cOther)) { entry=snapToEdge(cEnd,cOther,half); }
+  else { entry=snapToEdge(cOther,cEnd,half); }
+  // Exit: midpoint of intersection (stop here — other plate cuts the remaining half)
+  const exit = { u: lMid.u, v: lMid.v };
+  const du=exit.u-entry.u, dv=exit.v-entry.v;
+  if(Math.sqrt(du*du+dv*dv) < inserted.thick) return null;
   if(!host.inBounds(exit.u, exit.v, host.thick*0.5)) return null;
   if(distToEdge(entry) > host.size*0.03) return null;
   return { host, inserted, entry, exit, width: inserted.thick*tol };
