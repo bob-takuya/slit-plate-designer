@@ -7,71 +7,180 @@
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
-    /* ===== 共通 ===== */
-    body { font-family: 'Segoe UI', system-ui, sans-serif; background: #1a1a2e; color: #e0e0e0; }
-    #sidebar h1 { font-size: 16px; font-weight: 700; color: #e94560; margin-bottom: 16px; letter-spacing: 1px; text-transform: uppercase; }
-    #sidebar h2 { font-size: 12px; font-weight: 600; color: #a0a0c0; margin: 16px 0 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+    /* ===== Design system: monochrome + single accent (#e94560) ===== */
+    :root {
+      --bg:       #111;
+      --surface:  #1a1a1a;
+      --surface2: #222;
+      --border:   #2e2e2e;
+      --border2:  #3a3a3a;
+      --text:     #eee;
+      --muted:    #888;
+      --faint:    #555;
+      --accent:   #e94560;
+      --accent-dim: rgba(233,69,96,0.15);
+    }
+
+    body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); }
+
+    /* ===== Sidebar ===== */
+    #sidebar h1 {
+      font-size: 14px; font-weight: 700; color: var(--accent);
+      margin-bottom: 16px; letter-spacing: 2px; text-transform: uppercase;
+    }
+    #sidebar h2 {
+      font-size: 10px; font-weight: 600; color: var(--faint);
+      margin: 16px 0 8px; text-transform: uppercase; letter-spacing: 1px;
+    }
     .field { margin-bottom: 10px; }
-    .field label { display: block; font-size: 12px; color: #a0a0c0; margin-bottom: 3px; }
-    .field input, .field select { width: 100%; padding: 6px 8px; background: #0f3460; border: 1px solid #1a4a8a; border-radius: 4px; color: #e0e0e0; font-size: 13px; }
-    .field input:focus, .field select:focus { outline: none; border-color: #e94560; }
-    button { width: 100%; padding: 8px; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 600; margin-bottom: 8px; transition: opacity 0.2s; }
-    button:hover { opacity: 0.85; }
-    #btn-optimize { background: #e94560; color: white; }
-    #btn-export-csv { background: #0f3460; color: #7ec8e3; border: 1px solid #7ec8e3; }
-    #btn-export-dxf { background: #0f3460; color: #7ec8e3; border: 1px solid #7ec8e3; }
-    #btn-export-top { background: #0f3460; color: #7ec8e3; border: 1px solid #7ec8e3; }
-    #stats { background: #0f3460; border-radius: 6px; padding: 10px; font-size: 12px; line-height: 1.8; color: #a0c4ff; margin-bottom: 12px; }
-    #stats span { color: #e0e0e0; font-weight: 600; }
-    #log { background: #0a0a1a; border-radius: 4px; padding: 8px; font-size: 11px; color: #60a060; font-family: monospace; height: 80px; overflow-y: auto; margin-top: 8px; }
+    .field label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 3px; }
+    .field input, .field select {
+      width: 100%; padding: 6px 8px;
+      background: var(--surface2); border: 1px solid var(--border2);
+      border-radius: 3px; color: var(--text); font-size: 13px;
+    }
+    .field input:focus, .field select:focus { outline: none; border-color: var(--accent); }
+
+    button {
+      width: 100%; padding: 8px; border: 1px solid var(--border2);
+      border-radius: 3px; cursor: pointer; font-size: 12px; font-weight: 600;
+      margin-bottom: 8px; transition: opacity 0.15s;
+      background: var(--surface2); color: var(--muted);
+    }
+    button:hover { opacity: 0.8; }
+
+    #btn-optimize {
+      background: var(--accent); color: #fff; border-color: var(--accent);
+      font-size: 13px; letter-spacing: 0.5px;
+    }
+    #btn-preview-2d {
+      background: var(--accent-dim); color: var(--accent); border-color: var(--accent);
+    }
+
+    #stats {
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 3px; padding: 10px; font-size: 12px;
+      line-height: 2; color: var(--muted); margin-bottom: 12px;
+    }
+    #stats span { color: var(--text); font-weight: 600; }
+
+    #log {
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: 3px; padding: 8px; font-size: 10px;
+      color: var(--faint); font-family: monospace; height: 90px; overflow-y: auto; margin-top: 8px;
+    }
+
     #topview-canvas { display: none; }
-    /* View switcher tabs (3D / 2D) */
-    #view-tab-bar { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 5; display: flex; gap: 4px; }
-    .view-tab { padding: 5px 16px; border: 1px solid #0f3460; border-radius: 20px; background: rgba(22,33,62,0.85); color: #a0a0c0; font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.15s; }
-    .view-tab:hover { background: rgba(15,52,96,0.95); color: #e0e0e0; }
-    .view-tab.active { background: #e94560; border-color: #e94560; color: #fff; }
-    /* SVG preview panel */
-    #svg-preview { display: none; position: absolute; inset: 0; overflow: auto; background: #f0f0f0; padding: 16px; }
-    #svg-preview svg { display: block; margin: auto; box-shadow: 0 2px 12px rgba(0,0,0,0.18); background: #fff; }
-    .tab-bar { display: flex; gap: 4px; margin-bottom: 12px; }
-    .tab { flex: 1; padding: 6px; background: #0f3460; border: 1px solid #1a4a8a; border-radius: 4px; cursor: pointer; font-size: 11px; text-align: center; color: #a0a0c0; }
-    .tab.active { background: #e94560; border-color: #e94560; color: white; }
+
+    /* ===== Sidebar tabs ===== */
+    .tab-bar { display: flex; gap: 0; margin-bottom: 16px; border: 1px solid var(--border2); border-radius: 3px; overflow: hidden; }
+    .tab {
+      flex: 1; padding: 7px; background: var(--surface2);
+      cursor: pointer; font-size: 11px; font-weight: 600;
+      text-align: center; color: var(--muted);
+      border-right: 1px solid var(--border2); transition: background 0.15s;
+    }
+    .tab:last-child { border-right: none; }
+    .tab:hover { background: var(--surface); color: var(--text); }
+    .tab.active { background: var(--accent); color: #fff; }
     .section { display: none; }
     .section.active { display: block; }
 
-    /* ===== デスクトップ（641px以上）: 横並び ===== */
-    @media (min-width: 641px) {
-      body { display: flex; height: 100vh; overflow: hidden; position: relative; }
-      #sidebar { width: 320px; background: #16213e; padding: 16px; overflow-y: auto; flex-shrink: 0; border-right: 1px solid #0f3460; transition: width 0.25s ease, padding 0.25s ease; }
-      #sidebar.collapsed { width: 0; padding: 0; overflow: hidden; border-right: none; }
-      #sidebar-toggle { display: flex; position: absolute; top: 10px; left: 10px; z-index: 10; width: 32px; height: 32px; background: #16213e; border: 1px solid #0f3460; border-radius: 6px; cursor: pointer; align-items: center; justify-content: center; font-size: 16px; color: #a0a0c0; transition: left 0.25s ease; }
-      #sidebar-toggle:hover { background: #0f3460; color: #e0e0e0; }
-      body.sidebar-open #sidebar-toggle { left: 330px; }
-      #main { flex: 1; position: relative; }
-      #canvas3d { width: 100%; height: 100%; display: block; }
-      #overlay { position: absolute; top: 10px; right: 10px; background: rgba(22,33,62,0.85); padding: 8px 12px; border-radius: 6px; font-size: 11px; color: #a0a0c0; line-height: 1.6; }
+    /* ===== View switcher (3D / 2D) ===== */
+    #view-tab-bar {
+      position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+      z-index: 5; display: flex; gap: 0;
+      border: 1px solid var(--border2); border-radius: 3px; overflow: hidden;
+    }
+    .view-tab {
+      padding: 5px 18px; background: rgba(17,17,17,0.88);
+      color: var(--muted); font-size: 11px; font-weight: 600;
+      cursor: pointer; border: none; border-right: 1px solid var(--border2);
+      transition: all 0.15s;
+    }
+    .view-tab:last-child { border-right: none; }
+    .view-tab:hover { background: rgba(34,34,34,0.95); color: var(--text); }
+    .view-tab.active { background: var(--accent); color: #fff; }
+
+    /* ===== SVG preview panel ===== */
+    #svg-preview {
+      display: none; position: absolute; inset: 0;
+      overflow: auto; background: #e8e8e8; padding: 20px;
+    }
+    #svg-preview svg {
+      display: block; margin: auto;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.22); background: #fff;
     }
 
-    /* ===== モバイル（640px以下）: 縦並び（設定 → ビューワー）===== */
+    /* ===== Export section helpers ===== */
+    .btn-row { display: flex; gap: 6px; margin-bottom: 8px; }
+    .btn-row button { flex: 1; margin: 0; }
+    .note { font-size: 10px; color: var(--faint); margin-bottom: 12px; line-height: 1.5; }
+
+    /* ===== Scrollbar ===== */
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+
+    /* ===== Desktop (≥641px): side-by-side ===== */
+    @media (min-width: 641px) {
+      body { display: flex; height: 100vh; overflow: hidden; }
+      #sidebar {
+        width: 300px; background: var(--surface); padding: 16px;
+        overflow-y: auto; flex-shrink: 0;
+        border-right: 1px solid var(--border);
+        transition: width 0.25s ease, padding 0.25s ease;
+      }
+      #sidebar.collapsed { width: 0; padding: 0; overflow: hidden; border-right: none; }
+      #sidebar-toggle {
+        display: flex; position: absolute; top: 10px; left: 10px; z-index: 10;
+        width: 28px; height: 28px; background: var(--surface);
+        border: 1px solid var(--border2); border-radius: 3px;
+        cursor: pointer; align-items: center; justify-content: center;
+        font-size: 14px; color: var(--faint); transition: left 0.25s ease;
+      }
+      #sidebar-toggle:hover { color: var(--text); border-color: var(--muted); }
+      body.sidebar-open #sidebar-toggle { left: 310px; }
+      #main { flex: 1; position: relative; }
+      #canvas3d { width: 100%; height: 100%; display: block; }
+      #overlay {
+        position: absolute; top: 12px; right: 12px;
+        background: rgba(17,17,17,0.7); padding: 6px 10px;
+        border-radius: 3px; font-size: 10px; color: var(--faint); line-height: 1.8;
+        border: 1px solid var(--border);
+      }
+    }
+
+    /* ===== Mobile (≤640px): stacked ===== */
     @media (max-width: 640px) {
       body { display: flex; flex-direction: column; min-height: 100vh; }
       #sidebar-toggle { display: none; }
-      #sidebar { width: 100%; background: #16213e; padding: 16px; overflow-y: visible; border-bottom: 1px solid #0f3460; }
+      #sidebar {
+        width: 100%; background: var(--surface); padding: 14px;
+        overflow-y: visible; border-bottom: 1px solid var(--border);
+      }
       #main { width: 100%; height: 70vw; min-height: 280px; max-height: 480px; position: relative; flex-shrink: 0; }
       #canvas3d { width: 100%; height: 100%; display: block; }
-      #overlay { position: absolute; bottom: 8px; left: 8px; background: rgba(22,33,62,0.85); padding: 6px 10px; border-radius: 6px; font-size: 10px; color: #a0a0c0; line-height: 1.5; }
+      #overlay {
+        position: absolute; bottom: 8px; left: 8px;
+        background: rgba(17,17,17,0.75); padding: 5px 8px;
+        border-radius: 3px; font-size: 10px; color: var(--faint); line-height: 1.5;
+      }
     }
   </style>
 </head>
 <body class="sidebar-open">
 <button id="sidebar-toggle" onclick="toggleSidebar()" title="サイドバーを開閉">◀</button>
+
 <div id="sidebar">
   <h1>Slit Plate Designer</h1>
+
   <div class="tab-bar">
     <div class="tab active" onclick="switchTab('params')">Params</div>
-    <div class="tab" onclick="switchTab('export')">Export</div>
+    <div class="tab"        onclick="switchTab('export')">Export</div>
   </div>
 
+  <!-- ===== Params tab ===== -->
   <div id="tab-params" class="section active">
     <h2>Plate</h2>
     <div class="field"><label>Side length (mm)</label><input type="number" id="plateSize" value="100" min="10" step="5"></div>
@@ -90,12 +199,12 @@
 
     <h2>Optimization</h2>
     <div class="field"><label>Random seed</label><input type="number" id="rngSeed" value="42" min="0" step="1"></div>
-    <div class="field"><label>Max plates (safety limit)</label><input type="number" id="maxPlates" value="150" min="5" max="500" step="5"></div>
+    <div class="field"><label>Max plates</label><input type="number" id="maxPlates" value="150" min="5" max="500" step="5"></div>
     <div class="field">
-      <label>Trials per step &nbsp;<span style="color:#7ec8e3;font-size:10px;">↑ = more variety, slower</span></label>
+      <label>Trials per step <span style="font-size:10px;color:var(--faint);">↑ = more variety</span></label>
       <input type="number" id="nRandom" value="80" min="20" max="300" step="10">
     </div>
-    <div class="field"><label>Slit tolerance factor</label><input type="number" id="slitTol" value="1.05" min="1.01" max="1.2" step="0.01"></div>
+    <div class="field"><label>Slit tolerance</label><input type="number" id="slitTol" value="1.05" min="1.01" max="1.2" step="0.01"></div>
 
     <button id="btn-optimize" onclick="runOptimize()">▶ Optimize</button>
 
@@ -108,22 +217,25 @@
     <div id="log"></div>
   </div>
 
+  <!-- ===== Export tab ===== -->
   <div id="tab-export" class="section">
-    <h2>DXF / SVG Export</h2>
+    <h2>2D Preview</h2>
     <div class="field"><label>Plates per row</label><input type="number" id="dxfCols" value="5" min="1" max="20"></div>
     <div class="field"><label>Spacing (mm)</label><input type="number" id="dxfSpacing" value="20" min="5" step="5"></div>
-    <div style="display:flex;gap:6px;margin-bottom:8px;">
-      <button id="btn-export-dxf" onclick="exportDXF()" style="flex:1;margin:0;">⬇ DXF</button>
-      <button id="btn-export-svg" onclick="exportSVG()" style="flex:1;margin:0;background:#0f3460;color:#90ee90;border:1px solid #90ee90;">⬇ SVG</button>
+
+    <button id="btn-preview-2d" onclick="refreshPreview()">↻ 2D ビューワーを更新</button>
+
+    <h2>Download</h2>
+    <div class="btn-row">
+      <button onclick="exportDXF()">⬇ DXF</button>
+      <button onclick="exportSVG()">⬇ SVG</button>
     </div>
-    <p style="font-size:10px;color:#7a7a9a;margin-bottom:12px;">レイヤー: PLATES / SLITS / SLIT_IDS（スリット組み番号）/ LABELS</p>
+    <p class="note">レイヤー: PLATES / SLITS / SLIT_IDS / LABELS</p>
+    <button onclick="exportCSV()">⬇ CSV (normals + slits)</button>
 
-    <h2>CSV Export</h2>
-    <button id="btn-export-csv" onclick="exportCSV()">⬇ Export CSV (normals + slits)</button>
-
-    <h2>Top View</h2>
+    <h2>Top View PNG</h2>
     <div class="field"><label>Scale (px/mm)</label><input type="number" id="topScale" value="1" min="0.1" max="5" step="0.1"></div>
-    <button id="btn-export-top" onclick="exportTopView()">⬇ Export Top View PNG</button>
+    <button onclick="exportTopView()">⬇ Export PNG</button>
 
     <canvas id="topview-canvas"></canvas>
   </div>
@@ -146,12 +258,11 @@
 <script>
 function toggleSidebar() {
   const sidebar = document.getElementById('sidebar');
-  const toggle = document.getElementById('sidebar-toggle');
   const body = document.body;
   sidebar.classList.toggle('collapsed');
   body.classList.toggle('sidebar-open');
-  toggle.textContent = sidebar.classList.contains('collapsed') ? '▶' : '◀';
-  // Three.js キャンバスをリサイズ
+  document.getElementById('sidebar-toggle').textContent =
+    sidebar.classList.contains('collapsed') ? '▶' : '◀';
   setTimeout(() => {
     if (window.renderer && window.camera) {
       const main = document.getElementById('main');
@@ -162,35 +273,35 @@ function toggleSidebar() {
   }, 300);
 }
 
-function resizeRenderer() {
+window.addEventListener('resize', () => {
   if (window.renderer && window.camera) {
     const main = document.getElementById('main');
     window.renderer.setSize(main.clientWidth, main.clientHeight);
     window.camera.aspect = main.clientWidth / main.clientHeight;
     window.camera.updateProjectionMatrix();
   }
-}
-window.addEventListener('resize', resizeRenderer);
+});
 
 function switchTab(name) {
-  document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', ['params','export'][i]===name));
+  document.querySelectorAll('.tab').forEach((t, i) =>
+    t.classList.toggle('active', ['params','export'][i] === name));
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
-  document.getElementById('tab-'+name).classList.add('active');
+  document.getElementById('tab-' + name).classList.add('active');
 }
 
 function switchView(mode) {
-  const canvas = document.getElementById('canvas3d');
+  const canvas  = document.getElementById('canvas3d');
   const preview = document.getElementById('svg-preview');
   const overlay = document.getElementById('overlay');
-  document.getElementById('vtab-3d').classList.toggle('active', mode==='3d');
-  document.getElementById('vtab-2d').classList.toggle('active', mode==='2d');
+  document.getElementById('vtab-3d').classList.toggle('active', mode === '3d');
+  document.getElementById('vtab-2d').classList.toggle('active', mode === '2d');
   if (mode === '2d') {
-    canvas.style.display = 'none';
+    canvas.style.display  = 'none';
     overlay.style.display = 'none';
     preview.style.display = 'block';
-    if (!preview.hasChildNodes()) updateSVGPreview();
+    updateSVGPreview();
   } else {
-    canvas.style.display = 'block';
+    canvas.style.display  = 'block';
     overlay.style.display = '';
     preview.style.display = 'none';
   }
@@ -200,14 +311,19 @@ function updateSVGPreview() {
   const preview = document.getElementById('svg-preview');
   if (typeof buildSVGString === 'function') {
     preview.innerHTML = buildSVGString();
-    // Enable pinch-zoom on mobile via SVG viewBox (already set)
   }
 }
+
+// Called by "↻ 2D ビューワーを更新" button in Export tab
+function refreshPreview() {
+  updateSVGPreview();
+  switchView('2d');
+}
+
 document.getElementById('targetShape').addEventListener('change', e => {
-  document.getElementById('cylHeight-wrap').style.display = e.target.value==='cylinder'?'block':'none';
-  updateOptimalN();
+  document.getElementById('cylHeight-wrap').style.display =
+    e.target.value === 'cylinder' ? 'block' : 'none';
 });
-// (no legacy auto-density needed in v8)
 </script>
 </body>
 </html>
