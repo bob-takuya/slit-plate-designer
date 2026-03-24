@@ -81,8 +81,13 @@
     <div class="field" id="cylHeight-wrap" style="display:none;"><label>Height (mm)</label><input type="number" id="cylHeight" value="200" min="50" step="10"></div>
 
     <h2>Optimization</h2>
-    <div class="field"><label>Plate density (approx count)</label><input type="number" id="density" value="40" min="5" max="200" step="5"></div>
-    <div class="field"><label>Iterations</label><input type="number" id="iterations" value="200" min="50" max="1000" step="50"></div>
+    <div class="field">
+      <label>Plate density (grid cells) &nbsp;<span id="optimal-n" style="color:#7ec8e3;font-size:11px;"></span></label>
+      <div style="display:flex;gap:6px;">
+        <input type="number" id="density" value="40" min="5" max="500" step="5" style="flex:1;">
+        <button onclick="autoOptimalDensity()" style="width:auto;padding:6px 10px;margin:0;background:#0f3460;color:#7ec8e3;border:1px solid #7ec8e3;font-size:11px;" title="球面積からプレート枚数を自動計算">Auto</button>
+      </div>
+    </div>
     <div class="field"><label>Slit tolerance factor</label><input type="number" id="slitTol" value="1.05" min="1.01" max="1.2" step="0.01"></div>
 
     <button id="btn-optimize" onclick="runOptimize()">▶ Optimize</button>
@@ -91,7 +96,8 @@
       Plates: <span id="st-plates">—</span><br>
       Slits: <span id="st-slits">—</span><br>
       Connected: <span id="st-connected">—</span><br>
-      Coverage: <span id="st-coverage">—</span>
+      Coverage: <span id="st-coverage">—</span><br>
+      Sphere deviation: <span id="st-deviation">—</span>
     </div>
     <div id="log"></div>
   </div>
@@ -158,7 +164,12 @@ function switchTab(name) {
 }
 document.getElementById('targetShape').addEventListener('change', e => {
   document.getElementById('cylHeight-wrap').style.display = e.target.value==='cylinder'?'block':'none';
+  updateOptimalN();
 });
+document.getElementById('targetRadius').addEventListener('input', updateOptimalN);
+document.getElementById('plateSize').addEventListener('input', updateOptimalN);
+// Initialize
+updateOptimalN();
 </script>
 </body>
 </html>

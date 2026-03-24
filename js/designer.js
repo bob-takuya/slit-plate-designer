@@ -300,6 +300,48 @@ function largestComponent(plates) {
 // ============================================================
 let PLATES = [];
 
+// ============================================================
+// Auto-calculate optimal density based on sphere radius and plate size
+// ============================================================
+function autoOptimalDensity() {
+  const R = +document.getElementById('targetRadius').value;
+  const L = +document.getElementById('plateSize').value;
+  const shape = document.getElementById('targetShape').value;
+
+  let surfaceArea;
+  if (shape === 'sphere') {
+    surfaceArea = 4 * Math.PI * R * R;
+  } else if (shape === 'hemisphere') {
+    surfaceArea = 2 * Math.PI * R * R;
+  } else {
+    const H = +document.getElementById('cylHeight').value;
+    surfaceArea = 2 * Math.PI * R * H;
+  }
+
+  // Theoretical plate count: surface area / plate area
+  // Factor 0.85 accounts for checkerboard gaps and slit failures
+  const N_optimal = Math.round(surfaceArea / (L * L) * 0.85);
+  // densityHint: grid cells needed ≈ N_optimal / 0.9 (connection success rate)
+  const hint = Math.max(5, Math.round(N_optimal / 0.9));
+
+  document.getElementById('density').value = hint;
+  document.getElementById('optimal-n').textContent = `≈${N_optimal} plates`;
+  LOG(`Auto density set: ${hint} (target ~${N_optimal} plates for R=${R}, L=${L})`);
+}
+
+function updateOptimalN() {
+  const R = +document.getElementById('targetRadius').value;
+  const L = +document.getElementById('plateSize').value;
+  const shape = document.getElementById('targetShape').value;
+  let surfaceArea;
+  if (shape === 'sphere') surfaceArea = 4 * Math.PI * R * R;
+  else if (shape === 'hemisphere') surfaceArea = 2 * Math.PI * R * R;
+  else { const H = +document.getElementById('cylHeight').value; surfaceArea = 2 * Math.PI * R * H; }
+  const N = Math.round(surfaceArea / (L * L) * 0.85);
+  const el = document.getElementById('optimal-n');
+  if (el) el.textContent = `≈${N} plates`;
+}
+
 async function runOptimize() {
   const size   = +document.getElementById('plateSize').value;
   const thick  = +document.getElementById('plateThick').value;
@@ -312,24 +354,23 @@ async function runOptimize() {
   document.getElementById('log').textContent = '';
 
   // ================================================================
-  // DESIGN: Checkerboard UV-grid with two perpendicular normal families
+  // DESIGN: Checkerboard UV-grid — equal-area sampling (v7)
   //
-  // Root-cause of the "1 plate" bug in v2:
-  //   All plates had radially-outward normals → nearby plates always have
-  //   similar (nearly parallel) normals → perpendicularity check fails →
-  //   every candidate that touches an existing plate gets rejected.
+  // Key fix from checkerboard v2:
+  //   v2 used uniform φ-sampling (equal angle spacing) → polar bias
+  //   (too many plates near poles, too few near equator)
   //
-  // Fix: arrange plates in a checkerboard UV-grid where
-  //   even cells → phiTangent normal
-  //   odd cells  → thetaTangent normal
+  //   v7 uses equal-area sampling: cos(φ) is uniformly spaced
+  //   → each grid cell represents equal solid angle
+  //   → uniform plate density across the sphere
   //
-  // phiTangent ⊥ thetaTangent at every sphere point, so adjacent
-  // (different-parity) cells always satisfy |dot| < 0.15.
+  // Also: nU:nV = 2:1 ratio (θ spans 2π, φ spans π → natural aspect ratio)
   // ================================================================
 
-  const nU = Math.max(3, Math.round(Math.sqrt(densityHint * 1.6)));
-  const nV = Math.max(3, Math.round(densityHint * 1.6 / nU));
-  LOG(`Grid: ${nU}×${nV} = ${nU*nV} candidates (checkerboard)`);
+  // Equal-area grid: nU:nV ≈ 2:1 for sphere
+  const nV = Math.max(3, Math.round(Math.sqrt(densityHint * 0.8)));
+  const nU = Math.max(4, Math.round(nV * 2));
+  LOG(`Grid: ${nU}×${nV} = ${nU*nV} candidates (equal-area, 2:1 ratio)`);
 
   let idCtr = 0;
   const grid = []; // grid[ui][vi] = Plate
@@ -340,13 +381,18 @@ async function runOptimize() {
       let center, phiTan, thetaTan;
 
       if (shape === 'sphere' || shape === 'hemisphere') {
-        const phiMax = shape === 'hemisphere' ? Math.PI / 2 : Math.PI;
         const theta = (ui / nU) * Math.PI * 2;
-        // avoid poles: remap vi to [0.1π … 0.9π] for sphere
+        // Equal-area sampling: cos(φ) uniformly spaced → each cell = equal solid angle
+        // tNorm ∈ (0, 1) naturally avoids exact poles (uses cell centers)
         const tNorm = (vi + 0.5) / nV;
-        const phi = shape === 'hemisphere'
-          ? tNorm * phiMax * 0.95 + 0.05  // 0.05 … 0.95·(π/2)
-          : tNorm * Math.PI * 0.8 + 0.1 * Math.PI; // 0.1π … 0.9π
+        let phi;
+        if (shape === 'hemisphere') {
+          // φ ∈ [0, π/2]: cos(φ) goes from 1→0; equal-area: cos(φ) = 1 - tNorm
+          phi = Math.acos(Math.max(0, 1 - tNorm));
+        } else {
+          // φ ∈ [0, π]: cos(φ) goes from 1→-1; equal-area: cos(φ) = 1 - 2*tNorm
+          phi = Math.acos(1 - 2 * tNorm);
+        }
 
         const sP = Math.sin(phi), cP = Math.cos(phi);
         const sT = Math.sin(theta), cT = Math.cos(theta);
@@ -431,10 +477,19 @@ async function runOptimize() {
   PLATES = final;
 
   const totalSlits = final.reduce((a, p) => a + p.slits.length, 0);
+  // Compute sphere coverage quality: average |center| vs target radius
+  let avgDist = 0, maxDist = 0;
+  for (const p of final) {
+    const d = Math.abs(Math.sqrt(dot(p.center, p.center)) - radius);
+    avgDist += d; maxDist = Math.max(maxDist, d);
+  }
+  if (final.length) avgDist /= final.length;
+
   STAT('st-plates',    final.length);
   STAT('st-slits',     totalSlits);
   STAT('st-connected', final.length > 0 ? `✓ (${final.length})` : '✗');
   STAT('st-coverage',  ((final.length / (nU * nV)) * 100).toFixed(0) + '%');
+  STAT('st-deviation', final.length ? `avg ${avgDist.toFixed(1)}mm / max ${maxDist.toFixed(1)}mm` : '—');
 
   LOG('Rendering...');
   renderScene(final);
@@ -451,10 +506,12 @@ function initRenderer() {
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(window.devicePixelRatio);
   renderer.setClearColor(0x1a1a2e);
+  window.renderer = renderer; // expose for sidebar resize
 
   scene = new THREE.Scene();
   camera = new THREE.PerspectiveCamera(60, canvas.clientWidth / canvas.clientHeight, 1, 20000);
   camera.position.set(0, 200, 800);
+  window.camera = camera; // expose for sidebar resize
 
   scene.add(new THREE.AmbientLight(0xffffff, 0.5));
   const dl = new THREE.DirectionalLight(0xffffff, 0.9);
