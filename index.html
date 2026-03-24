@@ -105,11 +105,20 @@
     /* ===== SVG preview panel ===== */
     #svg-preview {
       display: none; position: absolute; inset: 0;
-      overflow: auto; background: #e8e8e8; padding: 20px;
+      overflow: hidden; background: #e8e8e8;
+      cursor: grab; user-select: none;
     }
+    #svg-preview:active { cursor: grabbing; }
     #svg-preview svg {
-      display: block; margin: auto;
+      display: block; margin: auto; margin-top: 20px;
       box-shadow: 0 4px 24px rgba(0,0,0,0.22); background: #fff;
+      transform-origin: center top;
+    }
+    #svg-hint {
+      position: absolute; bottom: 10px; right: 10px;
+      background: rgba(17,17,17,0.65); padding: 5px 10px;
+      border-radius: 3px; font-size: 10px; color: var(--faint);
+      pointer-events: none; border: 1px solid var(--border);
     }
 
     /* ===== Export section helpers ===== */
@@ -247,7 +256,9 @@
     <button class="view-tab"        id="vtab-2d" onclick="switchView('2d')">2D 展開図</button>
   </div>
   <canvas id="canvas3d"></canvas>
-  <div id="svg-preview"></div>
+  <div id="svg-preview">
+    <div id="svg-hint">Scroll: zoom &nbsp;|&nbsp; Drag: pan</div>
+  </div>
   <div id="overlay">
     Drag: rotate &nbsp;|&nbsp; Scroll: zoom &nbsp;|&nbsp; Right drag: pan
   </div>
@@ -307,12 +318,70 @@ function switchView(mode) {
   }
 }
 
-function updateSVGPreview() {
-  const preview = document.getElementById('svg-preview');
-  if (typeof buildSVGString === 'function') {
-    preview.innerHTML = buildSVGString();
+let svgZoom = 1, svgPanX = 0, svgPanY = 0;
+
+function applySVGTransform() {
+  const svg = document.querySelector('#svg-preview > svg');
+  if (svg) {
+    svg.style.transformOrigin = 'center top';
+    svg.style.transform = `translate(${svgPanX}px, ${svgPanY}px) scale(${svgZoom})`;
   }
 }
+
+function updateSVGPreview() {
+  svgZoom = 1; svgPanX = 0; svgPanY = 0;
+  const preview = document.getElementById('svg-preview');
+  // Re-insert SVG (preserve the hint div)
+  const hint = document.getElementById('svg-hint');
+  if (typeof buildSVGString === 'function') {
+    preview.innerHTML = buildSVGString();
+    preview.appendChild(hint);
+  }
+}
+
+function initSVGControls() {
+  const el = document.getElementById('svg-preview');
+
+  // Wheel: zoom
+  el.addEventListener('wheel', e => {
+    e.preventDefault();
+    svgZoom = Math.max(0.1, Math.min(20, svgZoom * (e.deltaY < 0 ? 1.15 : 1/1.15)));
+    applySVGTransform();
+  }, { passive: false });
+
+  // Mouse: pan
+  let down = false, lx = 0, ly = 0;
+  el.addEventListener('mousedown', e => { down = true; lx = e.clientX; ly = e.clientY; e.preventDefault(); });
+  window.addEventListener('mouseup', () => down = false);
+  window.addEventListener('mousemove', e => {
+    if (!down) return;
+    svgPanX += e.clientX - lx; svgPanY += e.clientY - ly;
+    lx = e.clientX; ly = e.clientY;
+    applySVGTransform();
+  });
+
+  // Touch: pinch zoom + pan
+  let tts = [], lpd = 0;
+  el.addEventListener('touchstart', e => {
+    tts = [...e.touches];
+    if (tts.length === 2) lpd = Math.hypot(tts[0].clientX-tts[1].clientX, tts[0].clientY-tts[1].clientY);
+    e.preventDefault();
+  }, { passive: false });
+  el.addEventListener('touchmove', e => {
+    if (e.touches.length === 1 && tts.length >= 1) {
+      svgPanX += e.touches[0].clientX - tts[0].clientX;
+      svgPanY += e.touches[0].clientY - tts[0].clientY;
+    } else if (e.touches.length === 2) {
+      const d = Math.hypot(e.touches[0].clientX-e.touches[1].clientX, e.touches[0].clientY-e.touches[1].clientY);
+      svgZoom = Math.max(0.1, Math.min(20, svgZoom * d / lpd));
+      lpd = d;
+    }
+    tts = [...e.touches];
+    applySVGTransform();
+    e.preventDefault();
+  }, { passive: false });
+}
+initSVGControls();
 
 // Called by "↻ 2D ビューワーを更新" button in Export tab
 function refreshPreview() {
