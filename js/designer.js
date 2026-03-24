@@ -529,7 +529,7 @@ function slitLabelPos(s, cx, cy, size) {
 function exportDXF() {
   if(!PLATES.length){alert('Run optimization first');return;}
   const cols=+document.getElementById('dxfCols').value, spacing=+document.getElementById('dxfSpacing').value, size=PLATES[0].size;
-  const sorted=[...PLATES].sort((a,b)=>b.center.z-a.center.z);
+  const sorted=[...PLATES].sort((a,b)=>a.id-b.id);
   let body='';
   sorted.forEach((p,idx)=>{
     const ox=(idx%cols)*(size+spacing), oy=-Math.floor(idx/cols)*(size+spacing), h=size/2;
@@ -559,7 +559,7 @@ function exportDXF() {
 function buildSVGString() {
   if(!PLATES.length) return '<svg xmlns="http://www.w3.org/2000/svg"><text x="10" y="20" font-size="14" fill="#999">No plates yet — run Optimize first</text></svg>';
   const cols=+document.getElementById('dxfCols').value, spacing=+document.getElementById('dxfSpacing').value, size=PLATES[0].size;
-  const sorted=[...PLATES].sort((a,b)=>b.center.z-a.center.z);
+  const sorted=[...PLATES].sort((a,b)=>a.id-b.id);
   const numRows=Math.ceil(sorted.length/cols);
   const pad=spacing/2;
   const W=cols*(size+spacing)+spacing, H=numRows*(size+spacing)+spacing;
