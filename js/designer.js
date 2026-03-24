@@ -197,6 +197,7 @@ function slitsOverlap(s1, s2) {
 // Main Optimizer — v8b: Random sampling + step optimization
 // ============================================================
 let PLATES = [];
+let slitPairCounter = 0;  // incremented each time a slit pair is committed
 
 async function runOptimize() {
   const size     = +document.getElementById('plateSize').value;
@@ -208,6 +209,7 @@ async function runOptimize() {
   const nRandom  = +document.getElementById('nRandom').value;
 
   document.getElementById('log').textContent = '';
+  slitPairCounter = 0;
   LOG('v8 — ランダムサンプリング + step最適化');
   LOG(`R=${radius} L=${size} thick=${thick} seed=${seed} maxPlates=${maxPl} trials/step=${nRandom}`);
 
@@ -289,6 +291,10 @@ async function runOptimize() {
     cands.sort((a,b) => b.score-a.score);
     const { pA, c_B, n_B, result } = cands[0];
     const pB = new Plate(PLATES.length, c_B, n_B, size, thick);
+    // Assign same pairId to both ends of this slit connection
+    const pairId = ++slitPairCounter;
+    result.slitA.pairId = pairId;
+    result.slitB.pairId = pairId;
     pA.slits.push(result.slitA);
     pB.slits.push(result.slitB);
     pA.neighbors.push(pB.id);
@@ -446,6 +452,19 @@ function exportCSV() {
   download('slit_plates.csv',rows.join('\n'),'text/csv');
 }
 
+// Helper: slit label position (beside the slit, clamped inside plate)
+function slitLabelPos(s, cx, cy, size) {
+  const mx=(s.entry.u+s.exit.u)/2, mv=(s.entry.v+s.exit.v)/2;
+  const du=s.exit.u-s.entry.u, dv=s.exit.v-s.entry.v;
+  const sl=Math.sqrt(du*du+dv*dv);
+  const nx=sl>1e-6?-dv/sl:1, ny=sl>1e-6?du/sl:0;
+  const off=size*0.07;
+  const h=size/2-size*0.1;
+  const lx=Math.max(-h,Math.min(h,mx+nx*off));
+  const ly=Math.max(-h,Math.min(h,mv+ny*off));
+  return {x:lx+cx, y:ly+cy};
+}
+
 function exportDXF() {
   if(!PLATES.length){alert('Run optimization first');return;}
   const cols=+document.getElementById('dxfCols').value, spacing=+document.getElementById('dxfSpacing').value, size=PLATES[0].size;
@@ -454,7 +473,7 @@ function exportDXF() {
   sorted.forEach((p,idx)=>{
     const ox=(idx%cols)*(size+spacing), oy=-Math.floor(idx/cols)*(size+spacing), h=size/2;
     body+=dxfRect(ox-h,oy-h,ox+h,oy+h,'PLATES');
-    body+=dxfText(ox-h+2,oy-h+2,String(idx+1),'LABELS',size*0.08);
+    body+=dxfText(ox-h+2,oy+h-size*0.1,String(idx+1),'LABELS',size*0.08);
     p.slits.forEach(s=>{
       const eu=s.entry.u+ox,ev=s.entry.v+oy,xu=s.exit.u+ox,xv=s.exit.v+oy;
       const du=xu-eu,dv=xv-ev,len=Math.sqrt(du*du+dv*dv);
@@ -464,10 +483,51 @@ function exportDXF() {
       body+=dxfLine(xu+nx,xv+ny,xu-nx,xv-ny,'SLITS');
       body+=dxfLine(xu-nx,xv-ny,eu-nx,ev-ny,'SLITS');
       body+=dxfLine(eu-nx,ev-ny,eu+nx,ev+ny,'SLITS');
+      // Slit pair ID on SLIT_IDS layer
+      if(s.pairId!=null){
+        const lp=slitLabelPos(s,ox,oy,size);
+        body+=dxfText(lp.x,lp.y,String(s.pairId),'SLIT_IDS',size*0.065);
+      }
     });
   });
   const full='0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n'+body+'0\nENDSEC\n0\nEOF\n';
   download('slit_plates.dxf',full,'application/dxf');
+}
+
+function exportSVG() {
+  if(!PLATES.length){alert('Run optimization first');return;}
+  const cols=+document.getElementById('dxfCols').value, spacing=+document.getElementById('dxfSpacing').value, size=PLATES[0].size;
+  const sorted=[...PLATES].sort((a,b)=>b.center.z-a.center.z);
+  const numRows=Math.ceil(sorted.length/cols);
+  const pad=spacing/2;
+  const W=cols*(size+spacing)+spacing, H=numRows*(size+spacing)+spacing;
+  const fs_label=(size*0.08).toFixed(2), fs_id=(size*0.065).toFixed(2);
+
+  let s=`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">\n`;
+  s+=`<rect width="100%" height="100%" fill="#fff"/>\n`;
+  s+=`<style>.plate{fill:none;stroke:#333;stroke-width:0.5}.lbl{font:bold ${fs_label}px sans-serif;fill:#555}.slit{fill:#444}.sid{font:bold ${fs_id}px sans-serif;fill:#c0392b}</style>\n`;
+
+  sorted.forEach((p,idx)=>{
+    const cx=pad+(idx%cols)*(size+spacing)+size/2;
+    const cy=pad+Math.floor(idx/cols)*(size+spacing)+size/2;
+    const h=size/2;
+    s+=`<rect class="plate" x="${cx-h}" y="${cy-h}" width="${size}" height="${size}"/>\n`;
+    s+=`<text class="lbl" x="${(cx-h+2).toFixed(1)}" y="${(cy-h+size*0.09).toFixed(1)}">${idx+1}</text>\n`;
+    p.slits.forEach(sl=>{
+      const eu=sl.entry.u+cx, ev=sl.entry.v+cy;
+      const xu=sl.exit.u+cx,  xv=sl.exit.v+cy;
+      const du=xu-eu, dv=xv-ev, len=Math.sqrt(du*du+dv*dv);
+      if(len<1e-9)return;
+      const hw=sl.width/2, nx=-dv/len*hw, ny=du/len*hw;
+      s+=`<polygon class="slit" points="${(eu+nx).toFixed(2)},${(ev+ny).toFixed(2)} ${(xu+nx).toFixed(2)},${(xv+ny).toFixed(2)} ${(xu-nx).toFixed(2)},${(xv-ny).toFixed(2)} ${(eu-nx).toFixed(2)},${(ev-ny).toFixed(2)}"/>\n`;
+      if(sl.pairId!=null){
+        const lp=slitLabelPos(sl,cx,cy,size);
+        s+=`<text class="sid" x="${lp.x.toFixed(2)}" y="${lp.y.toFixed(2)}">${sl.pairId}</text>\n`;
+      }
+    });
+  });
+  s+='</svg>\n';
+  download('slit_plates.svg',s,'image/svg+xml');
 }
 
 function dxfRect(x1,y1,x2,y2,l){return dxfLine(x1,y1,x2,y1,l)+dxfLine(x2,y1,x2,y2,l)+dxfLine(x2,y2,x1,y2,l)+dxfLine(x1,y2,x1,y1,l);}
