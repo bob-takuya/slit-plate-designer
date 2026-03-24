@@ -469,9 +469,9 @@ function renderScene(plates) {
     mesh.quaternion.setFromRotationMatrix(makeBasis(p.u,p.v,p.normal));
     scene.add(mesh);
 
-    // Plate number — above plate center, slightly offset along normal
+    // Plate number — color matches the plate face color
     const plateLabel = makeTextSprite(String(p.id + 1), {
-      color: '#ffffff', bgColor: 'rgba(0,0,0,0.55)', scaleFactor: labelScale
+      color: '#' + col.getHexString(), bgColor: 'rgba(0,0,0,0.55)', scaleFactor: labelScale
     });
     const labelPos = add(p.center, scale(p.normal, p.thick / 2 + labelScale * 0.6));
     plateLabel.position.set(labelPos.x, labelPos.y, labelPos.z);
