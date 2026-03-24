@@ -419,6 +419,35 @@ function makeBasis(u, v, n) {
   return m;
 }
 
+// Billboard sprite with text drawn on a Canvas texture
+function makeTextSprite(text, { color='#ffffff', bgColor=null, fontSize=48, scaleFactor=1 }={}) {
+  const canvas = document.createElement('canvas');
+  const ctx    = canvas.getContext('2d');
+  ctx.font = `bold ${fontSize}px sans-serif`;
+  const tw = ctx.measureText(text).width;
+  const pad = fontSize * 0.3;
+  canvas.width  = Math.ceil(tw + pad * 2);
+  canvas.height = Math.ceil(fontSize * 1.4);
+  // Re-set font after resize (canvas reset clears state)
+  ctx.font = `bold ${fontSize}px sans-serif`;
+  if (bgColor) {
+    ctx.fillStyle = bgColor;
+    ctx.beginPath();
+    ctx.roundRect(0, 0, canvas.width, canvas.height, fontSize * 0.2);
+    ctx.fill();
+  }
+  ctx.fillStyle = color;
+  ctx.textAlign  = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+  const tex = new THREE.CanvasTexture(canvas);
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+  const sprite = new THREE.Sprite(mat);
+  const aspect = canvas.width / canvas.height;
+  sprite.scale.set(scaleFactor * aspect, scaleFactor, 1);
+  return sprite;
+}
+
 function renderScene(plates) {
   while(scene.children.length>2) scene.remove(scene.children[scene.children.length-1]);
   scene.add(new THREE.AxesHelper(80));
@@ -427,7 +456,11 @@ function renderScene(plates) {
     new THREE.SphereGeometry(r,32,20),
     new THREE.MeshBasicMaterial({color:0x223344,wireframe:true,transparent:true,opacity:0.08})
   ));
-  plates.forEach(p => {
+
+  // Label scale proportional to plate size
+  const labelScale = plates.length ? plates[0].size * 0.28 : 28;
+
+  plates.forEach((p, idx) => {
     const col=normalColor(p.normal);
     const mat=new THREE.MeshLambertMaterial({color:col,transparent:true,opacity:0.72,side:THREE.DoubleSide});
     const geo=new THREE.BoxGeometry(p.size,p.size,p.thick);
@@ -435,16 +468,35 @@ function renderScene(plates) {
     mesh.position.copy(p.center);
     mesh.quaternion.setFromRotationMatrix(makeBasis(p.u,p.v,p.normal));
     scene.add(mesh);
-    // Slit visualization (yellow) — draw only the physical cut (edge → midpoint)
-    p.slits.forEach(s=>{
-      const ce=slitCutExit(s);
-      const wEntry=p.localToWorld(s.entry.u,s.entry.v,0);
-      const wCut  =p.localToWorld(ce.u,ce.v,0);
-      const geo2=new THREE.BufferGeometry().setFromPoints([
-        new THREE.Vector3(wEntry.x,wEntry.y,wEntry.z),
-        new THREE.Vector3(wCut.x,wCut.y,wCut.z)
+
+    // Plate number — above plate center, slightly offset along normal
+    const plateLabel = makeTextSprite(String(idx + 1), {
+      color: '#ffffff', bgColor: 'rgba(0,0,0,0.55)', scaleFactor: labelScale
+    });
+    const labelPos = add(p.center, scale(p.normal, p.thick / 2 + labelScale * 0.6));
+    plateLabel.position.set(labelPos.x, labelPos.y, labelPos.z);
+    scene.add(plateLabel);
+
+    // Slit lines + slit pair ID labels
+    p.slits.forEach(s => {
+      const ce = slitCutExit(s);
+      const wEntry = p.localToWorld(s.entry.u, s.entry.v, 0);
+      const wCut   = p.localToWorld(ce.u, ce.v, 0);
+      const geo2 = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(wEntry.x, wEntry.y, wEntry.z),
+        new THREE.Vector3(wCut.x,   wCut.y,   wCut.z)
       ]);
-      scene.add(new THREE.Line(geo2,new THREE.LineBasicMaterial({color:0xffff00,linewidth:2})));
+      scene.add(new THREE.Line(geo2, new THREE.LineBasicMaterial({color:0xffff00,linewidth:2})));
+
+      // Slit ID label — at the cut end, just above the plate face
+      if (s.pairId != null) {
+        const slitLabel = makeTextSprite(String(s.pairId), {
+          color: '#e94560', bgColor: 'rgba(0,0,0,0.5)', scaleFactor: labelScale * 0.7
+        });
+        const sp = p.localToWorld(ce.u, ce.v, p.thick / 2 + labelScale * 0.45);
+        slitLabel.position.set(sp.x, sp.y, sp.z);
+        scene.add(slitLabel);
+      }
     });
   });
 }
