@@ -101,10 +101,14 @@
   </div>
 
   <div id="tab-export" class="section">
-    <h2>DXF Export</h2>
+    <h2>DXF / SVG Export</h2>
     <div class="field"><label>Plates per row</label><input type="number" id="dxfCols" value="5" min="1" max="20"></div>
     <div class="field"><label>Spacing (mm)</label><input type="number" id="dxfSpacing" value="20" min="5" step="5"></div>
-    <button id="btn-export-dxf" onclick="exportDXF()">⬇ Export DXF</button>
+    <div style="display:flex;gap:6px;margin-bottom:8px;">
+      <button id="btn-export-dxf" onclick="exportDXF()" style="flex:1;margin:0;">⬇ DXF</button>
+      <button id="btn-export-svg" onclick="exportSVG()" style="flex:1;margin:0;background:#0f3460;color:#90ee90;border:1px solid #90ee90;">⬇ SVG</button>
+    </div>
+    <p style="font-size:10px;color:#7a7a9a;margin-bottom:12px;">レイヤー: PLATES / SLITS / SLIT_IDS（スリット組み番号）/ LABELS</p>
 
     <h2>CSV Export</h2>
     <button id="btn-export-csv" onclick="exportCSV()">⬇ Export CSV (normals + slits)</button>
