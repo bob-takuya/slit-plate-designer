@@ -68,17 +68,27 @@
     <h2>Plate</h2>
     <div class="field"><label>Side length (mm)</label><input type="number" id="plateSize" value="100" min="10" step="5"></div>
     <div class="field"><label>Thickness (mm)</label><input type="number" id="plateThick" value="3" min="0.5" step="0.5"></div>
-    <div class="field"><label>Slit tolerance</label><input type="number" id="slitTol" value="1.05" min="1.01" max="1.2" step="0.01"></div>
 
-    <h2>Sphere Network</h2>
-    <div class="field"><label>Sphere radius (mm)</label><input type="number" id="targetRadius" value="200" min="20" step="10"></div>
-    <div class="field"><label>Plate count (N)</label><input type="number" id="density" value="30" min="3" max="200" step="1"></div>
-    <div class="field"><label>Random seed</label><input type="number" id="rngSeed" value="42" min="1" max="99999" step="1"></div>
-    <div style="font-size:11px;color:#60a080;margin:-4px 0 10px;line-height:1.6;">
-      各プレートの中心を球面上に誘導<br>
-      隣接法線は常に90°（直交保証）<br>
-      seed変更 → 別ランダム形状
+    <h2>Target Shape</h2>
+    <div class="field"><label>Shape</label>
+      <select id="targetShape">
+        <option value="sphere">Sphere</option>
+        <option value="hemisphere">Hemisphere</option>
+        <option value="cylinder">Cylinder</option>
+      </select>
     </div>
+    <div class="field"><label>Radius (mm)</label><input type="number" id="targetRadius" value="300" min="50" step="10"></div>
+    <div class="field" id="cylHeight-wrap" style="display:none;"><label>Height (mm)</label><input type="number" id="cylHeight" value="200" min="50" step="10"></div>
+
+    <h2>Optimization</h2>
+    <div class="field">
+      <label>Plate density (grid cells) &nbsp;<span id="optimal-n" style="color:#7ec8e3;font-size:11px;"></span></label>
+      <div style="display:flex;gap:6px;">
+        <input type="number" id="density" value="40" min="5" max="500" step="5" style="flex:1;">
+        <button onclick="autoOptimalDensity()" style="width:auto;padding:6px 10px;margin:0;background:#0f3460;color:#7ec8e3;border:1px solid #7ec8e3;font-size:11px;" title="球面積からプレート枚数を自動計算">Auto</button>
+      </div>
+    </div>
+    <div class="field"><label>Slit tolerance factor</label><input type="number" id="slitTol" value="1.05" min="1.01" max="1.2" step="0.01"></div>
 
     <button id="btn-optimize" onclick="runOptimize()">▶ Optimize</button>
 
@@ -86,7 +96,8 @@
       Plates: <span id="st-plates">—</span><br>
       Slits: <span id="st-slits">—</span><br>
       Connected: <span id="st-connected">—</span><br>
-      Coverage: <span id="st-coverage">—</span>
+      Coverage: <span id="st-coverage">—</span><br>
+      Sphere deviation: <span id="st-deviation">—</span>
     </div>
     <div id="log"></div>
   </div>
@@ -151,7 +162,14 @@ function switchTab(name) {
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
   document.getElementById('tab-'+name).classList.add('active');
 }
-// shape selector removed (sphere only in v3)
+document.getElementById('targetShape').addEventListener('change', e => {
+  document.getElementById('cylHeight-wrap').style.display = e.target.value==='cylinder'?'block':'none';
+  updateOptimalN();
+});
+document.getElementById('targetRadius').addEventListener('input', updateOptimalN);
+document.getElementById('plateSize').addEventListener('input', updateOptimalN);
+// Initialize
+updateOptimalN();
 </script>
 </body>
 </html>

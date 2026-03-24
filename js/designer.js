@@ -1,23 +1,11 @@
 // ============================================================
-// Slit Plate Designer v5
-//
-// アルゴリズム: 球面誘導付きランダムグロース
-//
-// 核心原理（Node.jsで全シード検証済み）:
-//   PA の法線 n_A が決まると PB の自由度は1:
-//     n_B = cos(θ)·u_A + sin(θ)·v_A   (n_A⊥n_B 厳密保証)
-//     c_B = c_A + r·d  (d はPA面内の単位方向ベクトル)
-//            → PA面上の点 → 接合が常に物理的に成立
-//
-// 球面誘導（v5新機能）:
-//   |c_B|² = R² を満たす r を2次方程式で解く
-//     r² + 2p·r + q = 0  (p = c_A·d, q = |c_A|²-R²)
-//   → c_B が常に球面上に来るよう誘導
-//   → n_B の θ は球の外法線方向を基準に摂動
-//
-// スリット描画修正（v5）:
-//   setFromUnitVectors(Z→normal) は u/v基底がズレる
-//   → makeBasis(u, v, normal) で正確に構築
+// Slit Plate Designer v2 — Revised Engine
+// 
+// Key changes from v1:
+//  - Normals are free (sphere surface tangent planes, not XYZ-aligned)
+//  - OBB-OBB strict interference via Separating Axis Theorem (SAT)
+//  - Automatic density: greedy plate addition under hard constraints
+//    (zero-interference + single connected component)
 // ============================================================
 
 const LOG = (msg) => {
@@ -26,580 +14,741 @@ const LOG = (msg) => {
   el.textContent += msg + '\n';
   el.scrollTop = el.scrollHeight;
 };
-const STAT = (id, val) => { const el=document.getElementById(id); if(el) el.textContent=val; };
+const STAT = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
 
+// ============================================================
+// Math Helpers
+// ============================================================
 const V3 = THREE.Vector3;
-const EPS = 1e-9;
 
-// ============================================================
-// ベクトル演算
-// ============================================================
-function vdot(a,b)   { return a.x*b.x+a.y*b.y+a.z*b.z; }
-function vcross(a,b) { return new V3(a.y*b.z-a.z*b.y, a.z*b.x-a.x*b.z, a.x*b.y-a.y*b.x); }
-function vnorm(v)    { const l=Math.sqrt(vdot(v,v)); return l<EPS?new V3(0,0,1):new V3(v.x/l,v.y/l,v.z/l); }
-function vscale(v,s) { return new V3(v.x*s,v.y*s,v.z*s); }
-function vadd(a,b)   { return new V3(a.x+b.x,a.y+b.y,a.z+b.z); }
-function vsub(a,b)   { return new V3(a.x-b.x,a.y-b.y,a.z-b.z); }
-function vlen(v)     { return Math.sqrt(vdot(v,v)); }
+function dot(a, b) { return a.x*b.x + a.y*b.y + a.z*b.z; }
+function cross(a, b) { return new V3(a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x); }
+function sub(a, b) { return new V3(a.x-b.x, a.y-b.y, a.z-b.z); }
+function add(a, b) { return new V3(a.x+b.x, a.y+b.y, a.z+b.z); }
+function scale(v, s) { return new V3(v.x*s, v.y*s, v.z*s); }
+function normalize(v) { const l = Math.sqrt(dot(v,v)); return l<1e-12?new V3(0,0,1):scale(v,1/l); }
 
-// シード付き乱数
-let _rng = 42;
-function rng()       { _rng=Math.imul(_rng,1664525)+1013904223|0; return (_rng>>>0)/4294967296; }
-function rngSeed(s)  { _rng = s>>>0; }
-
-// ============================================================
-// OBB-OBB 干渉判定（SAT 15軸）
-// ============================================================
-function obbIntersect(cA,axA,hA, cB,axB,hB) {
-  const D=vsub(cB,cA), axes=[...axA,...axB];
-  for(const a of axA) for(const b of axB){ const c=vcross(a,b); if(vdot(c,c)>EPS) axes.push(vnorm(c)); }
-  for(const ax of axes){
-    const n=vnorm(ax); let rA=0,rB=0;
-    for(let i=0;i<3;i++) rA+=hA[i]*Math.abs(vdot(axA[i],n));
-    for(let i=0;i<3;i++) rB+=hB[i]*Math.abs(vdot(axB[i],n));
-    if(Math.abs(vdot(D,n))>rA+rB+1e-6) return false;
+// Fibonacci sphere
+function fibonacciSphere(n) {
+  const pts = [];
+  const phi = Math.PI * (3 - Math.sqrt(5));
+  for (let i = 0; i < n; i++) {
+    const y = 1 - (i / (n - 1)) * 2;
+    const r = Math.sqrt(Math.max(0, 1 - y*y));
+    const theta = phi * i;
+    pts.push(new V3(r*Math.cos(theta), y, r*Math.sin(theta)));
   }
-  return true;
+  return pts;
 }
 
 // ============================================================
-// Plate クラス
+// Plate class
+// Each plate is a square of side `size` and depth `thickness`.
+// Normal = outward direction (perpendicular to plate surface).
 // ============================================================
 class Plate {
-  constructor(id, center, normal, size, thick) {
+  constructor(id, center, normal, size, thickness) {
     this.id = id;
     this.center = center.clone();
-    this.normal = vnorm(normal);
+    this.normal = normalize(normal);
     this.size = size;
-    this.thick = thick;
-    this.slits = [];
-    this.neighbors = [];
+    this.thick = thickness;
+    this.slits = [];      // Slit[]
+    this.neighbors = [];  // connected plate ids
+
+    // Build orthonormal frame: (u, v, normal)
     this._buildFrame();
   }
 
   _buildFrame() {
-    const ref = Math.abs(this.normal.y)<0.9 ? new V3(0,1,0) : new V3(1,0,0);
-    this.u = vnorm(vcross(this.normal, ref));
-    this.v = vnorm(vcross(this.normal, this.u));
+    const n = this.normal;
+    // Pick an arbitrary vector not parallel to n
+    const helper = Math.abs(n.y) < 0.9 ? new V3(0,1,0) : new V3(1,0,0);
+    this.u = normalize(cross(n, helper));
+    this.v = normalize(cross(n, this.u));
   }
 
-  localToWorld(pu, pv) {
-    return vadd(vadd(vscale(this.u,pu), vscale(this.v,pv)), this.center);
+  // World ← local(pu, pv, pn)
+  localToWorld(pu, pv, pn=0) {
+    return add(add(add(scale(this.u, pu), scale(this.v, pv)), scale(this.normal, pn)), this.center);
   }
 
+  // Inverse: project world point onto plate's local coords
   worldToLocal(pt) {
-    const d=vsub(pt,this.center);
-    return { u:vdot(d,this.u), v:vdot(d,this.v) };
+    const d = sub(pt, this.center);
+    return { u: dot(d, this.u), v: dot(d, this.v), n: dot(d, this.normal) };
   }
 
+  // Is (pu, pv) inside plate boundary?
   inBounds(pu, pv, margin=0) {
-    const h=this.size/2-margin;
-    return Math.abs(pu)<=h && Math.abs(pv)<=h;
+    const h = this.size/2 - margin;
+    return Math.abs(pu) <= h && Math.abs(pv) <= h;
   }
 
-  corners() {
-    const h=this.size/2;
-    return [[-h,-h],[h,-h],[h,h],[-h,h]].map(([u,v])=>this.localToWorld(u,v));
+  // 8 corners of the OBB in world coords
+  obbCorners() {
+    const h = this.size/2, ht = this.thick/2;
+    const corners = [];
+    for (const su of [-1, 1]) for (const sv of [-1, 1]) for (const sn of [-1, 1])
+      corners.push(this.localToWorld(su*h, sv*h, sn*ht));
+    return corners;
   }
 
+  // OBB description: {center, axes:[u,v,n], halfExtents:[h,h,ht]}
   obb() {
-    return {c:this.center, ax:[this.u,this.v,this.normal], h:[this.size/2,this.size/2,this.thick/2]};
-  }
-
-  intersects(other) {
-    const a=this.obb(), b=other.obb();
-    return obbIntersect(a.c,a.ax,a.h, b.c,b.ax,b.h);
+    return {
+      center: this.center,
+      axes: [this.u, this.v, this.normal],
+      halfExtents: [this.size/2, this.size/2, this.thick/2]
+    };
   }
 }
 
 // ============================================================
-// スリット幾何計算
+// OBB-OBB Intersection Test (Separating Axis Theorem)
+// Returns true if the two OBBs INTERSECT (overlap).
+// ============================================================
+function obbIntersect(obbA, obbB) {
+  const D = sub(obbB.center, obbA.center);
+  const axes = [];
+
+  // 3 face normals of A
+  for (const ax of obbA.axes) axes.push(ax);
+  // 3 face normals of B
+  for (const bx of obbB.axes) axes.push(bx);
+  // 9 cross products
+  for (const ax of obbA.axes)
+    for (const bx of obbB.axes) {
+      const c = cross(ax, bx);
+      if (dot(c,c) > 1e-10) axes.push(normalize(c));
+    }
+
+  for (const axis of axes) {
+    // Project A
+    let pA = 0;
+    for (let i=0; i<3; i++) pA += obbA.halfExtents[i] * Math.abs(dot(obbA.axes[i], axis));
+    // Project B
+    let pB = 0;
+    for (let i=0; i<3; i++) pB += obbB.halfExtents[i] * Math.abs(dot(obbB.axes[i], axis));
+    // Distance along axis
+    const dist = Math.abs(dot(D, axis));
+    if (dist > pA + pB + 1e-6) return false; // separating axis found
+  }
+  return true; // no separating axis → intersecting
+}
+
+// ============================================================
+// Compute intersection line of two planes defined by plates.
+// Returns { linePoint, lineDir } or null if parallel.
+// ============================================================
+function planeIntersectionLine(pA, pB) {
+  const lineDir = normalize(cross(pA.normal, pB.normal));
+  if (dot(lineDir, lineDir) < 0.01) return null; // nearly parallel
+
+  // Find a point on the line: solve system of two plane equations
+  const dA = dot(pA.normal, pA.center);
+  const dB = dot(pB.normal, pB.center);
+  const n1n2 = dot(pA.normal, pB.normal);
+  const det = 1 - n1n2*n1n2;
+  if (Math.abs(det) < 1e-8) return null;
+  const c1 = (dA - n1n2*dB)/det;
+  const c2 = (dB - n1n2*dA)/det;
+  const linePoint = add(scale(pA.normal, c1), scale(pB.normal, c2));
+  return { linePoint, lineDir };
+}
+
+// Project plate boundary onto line, return [tMin, tMax] or null
+function projectPlateOnLine(plate, linePoint, lineDir) {
+  const h = plate.size/2;
+  const ht = plate.thick/2;
+  const corners = plate.obbCorners();
+  const ts = corners.map(c => dot(sub(c, linePoint), lineDir));
+  const tMin = Math.min(...ts), tMax = Math.max(...ts);
+  // Check that midpoint of segment is within plate's 2D boundary
+  const tMid = (tMin+tMax)/2;
+  const midPt = add(linePoint, scale(lineDir, tMid));
+  const loc = plate.worldToLocal(midPt);
+  if (!plate.inBounds(loc.u, loc.v, plate.size*0.05)) return null;
+  return [tMin, tMax];
+}
+
+// Snap a local point toward the plate edge along direction toward `other`
+function snapToEdge(pt, other, half) {
+  const du = other.u - pt.u, dv = other.v - pt.v;
+  const len = Math.sqrt(du*du + dv*dv);
+  if (len < 1e-9) return { u: Math.sign(pt.u||1)*half, v: pt.v };
+  let t = Infinity;
+  if (Math.abs(du) > 1e-9) {
+    const t1 = (half - pt.u)/du;  if (t1 > 1e-6) t = Math.min(t, t1);
+    const t2 = (-half - pt.u)/du; if (t2 > 1e-6) t = Math.min(t, t2);
+  }
+  if (Math.abs(dv) > 1e-9) {
+    const t1 = (half - pt.v)/dv;  if (t1 > 1e-6) t = Math.min(t, t1);
+    const t2 = (-half - pt.v)/dv; if (t2 > 1e-6) t = Math.min(t, t2);
+  }
+  if (!isFinite(t)) return pt;
+  return { u: pt.u+du*t, v: pt.v+dv*t };
+}
+
+// ============================================================
+// Compute slit geometry for a perpendicular pair.
+// Returns { slitA, slitB } or null if invalid.
 // ============================================================
 function computeSlits(pA, pB, tol) {
-  const lineDir=vnorm(vcross(pA.normal,pB.normal));
-  if(vdot(lineDir,lineDir)<0.01) return null;
+  const line = planeIntersectionLine(pA, pB);
+  if (!line) return null;
+  const { linePoint, lineDir } = line;
 
-  const dA=vdot(pA.normal,pA.center), dB=vdot(pB.normal,pB.center);
-  const n12=vdot(pA.normal,pB.normal), det=1-n12*n12;
-  if(Math.abs(det)<EPS) return null;
-  const c1=(dA-n12*dB)/det, c2=(dB-n12*dA)/det;
-  const lp=vadd(vscale(pA.normal,c1), vscale(pB.normal,c2));
+  const rA = projectPlateOnLine(pA, linePoint, lineDir);
+  const rB = projectPlateOnLine(pB, linePoint, lineDir);
+  if (!rA || !rB) return null;
 
-  function projectOnLine(plate) {
-    const ts=plate.corners().map(c=>vdot(vsub(c,lp),lineDir));
-    const lo=Math.min(...ts), hi=Math.max(...ts);
-    const mid=vadd(lp,vscale(lineDir,(lo+hi)*0.5));
-    const loc=plate.worldToLocal(mid);
-    if(!plate.inBounds(loc.u,loc.v,plate.size*0.02)) return null;
-    return [lo,hi];
-  }
+  const tMin = Math.max(rA[0], rB[0]);
+  const tMax = Math.min(rA[1], rB[1]);
+  if (tMax - tMin < pA.thick * 1.5) return null; // too short
 
-  const tA=projectOnLine(pA), tB=projectOnLine(pB);
-  if(!tA||!tB) return null;
-  const tMin=Math.max(tA[0],tB[0]), tMax=Math.min(tA[1],tB[1]);
-  if(tMax-tMin<Math.max(pA.thick,pB.thick)*2.5) return null;
-
-  function snapEdge(pt, other, h) {
-    const du=other.u-pt.u, dv=other.v-pt.v, l=Math.sqrt(du*du+dv*dv);
-    if(l<EPS) return {u:Math.sign(pt.u||1)*h, v:pt.v};
-    let t=Infinity;
-    const tryT=tv=>{ if(tv>EPS) t=Math.min(t,tv); };
-    if(Math.abs(du)>EPS){ tryT((h-pt.u)/du); tryT((-h-pt.u)/du); }
-    if(Math.abs(dv)>EPS){ tryT((h-pt.v)/dv); tryT((-h-pt.v)/dv); }
-    if(!isFinite(t)) return pt;
-    return {u:pt.u+du*t, v:pt.v+dv*t};
-  }
-
-  function buildSlit(host, inserted) {
-    const h=host.size/2;
-    const le=host.worldToLocal(vadd(lp,vscale(lineDir,tMin)));
-    const lx=host.worldToLocal(vadd(lp,vscale(lineDir,tMax)));
-    const cl=p=>({u:Math.max(-h,Math.min(h,p.u)), v:Math.max(-h,Math.min(h,p.v))});
-    const ce=cl(le), cx=cl(lx);
-    const du=cx.u-ce.u, dv=cx.v-ce.v;
-    const w=inserted.thick*tol;
-    if(Math.sqrt(du*du+dv*dv)<w*2.5) return null;
-    const dte=p=>h-Math.max(Math.abs(p.u),Math.abs(p.v));
-    let entry,exit;
-    if(dte(ce)<=dte(cx)){ entry=snapEdge(ce,cx,h); exit=cx; }
-    else                 { entry=snapEdge(cx,ce,h); exit=ce; }
-    if(!host.inBounds(exit.u,exit.v,w*0.5)) return null;
-    return {host,inserted,entry,exit,width:w};
-  }
-
-  const sA=buildSlit(pA,pB), sB=buildSlit(pB,pA);
-  if(!sA||!sB) return null;
-  return {slitA:sA,slitB:sB};
+  const slitA = buildSlitOnPlate(pA, pB, linePoint, lineDir, tMin, tMax, tol);
+  const slitB = buildSlitOnPlate(pB, pA, linePoint, lineDir, tMin, tMax, tol);
+  if (!slitA || !slitB) return null;
+  return { slitA, slitB };
 }
 
-function slitsOverlap(s1,s2) {
-  const cl=(s1.width+s2.width)*0.5;
-  function ptSeg(pu,pv,s0,s1){
-    const dx=s1.u-s0.u,dy=s1.v-s0.v,l2=dx*dx+dy*dy;
-    if(l2<EPS) return Math.hypot(pu-s0.u,pv-s0.v);
-    const t=Math.max(0,Math.min(1,((pu-s0.u)*dx+(pv-s0.v)*dy)/l2));
-    return Math.hypot(pu-(s0.u+t*dx),pv-(s0.v+t*dy));
-  }
-  function int2d(a0,a1,b0,b1){
-    const dax=a1.u-a0.u,day=a1.v-a0.v,dbx=b1.u-b0.u,dby=b1.v-b0.v;
-    const dx=b0.u-a0.u,dy=b0.v-a0.v,den=dax*dby-day*dbx;
-    if(Math.abs(den)<EPS) return false;
-    const t=(dx*dby-dy*dbx)/den,s=(dx*day-dy*dax)/den;
-    return t>=-EPS&&t<=1+EPS&&s>=-EPS&&s<=1+EPS;
-  }
-  if(int2d(s1.entry,s1.exit,s2.entry,s2.exit)) return true;
-  return Math.min(
-    ptSeg(s1.entry.u,s1.entry.v,s2.entry,s2.exit),
-    ptSeg(s1.exit.u,s1.exit.v,s2.entry,s2.exit),
-    ptSeg(s2.entry.u,s2.entry.v,s1.entry,s1.exit),
-    ptSeg(s2.exit.u,s2.exit.v,s1.entry,s1.exit)
-  )<cl;
-}
+function buildSlitOnPlate(host, inserted, linePoint, lineDir, tMin, tMax, tol) {
+  const half = host.size/2;
+  const wEnd = add(linePoint, scale(lineDir, tMin));
+  const wOther = add(linePoint, scale(lineDir, tMax));
+  const lEnd = host.worldToLocal(wEnd);
+  const lOther = host.worldToLocal(wOther);
 
-// ============================================================
-// 球面最小二乗近似による c_B 配置
-//
-//   c_B = c_A + α·u_A + β·v_A  (PA面上の拘束)
-//   目的: minimize (|c_B| - R)²
-//
-//   PA面内での球の切断円（半径 r = √(R²-dA²)）:
-//     (au+α)² + (av+β)² = R² - dA²
-//   ただし |R²-dA²| < 0 ならPA面が球と交差しない
-//
-//   φ をランダムに選び:
-//     α = r·cosφ - au,  β = r·sinφ - av
-//   → clamp([-L*0.55, L*0.55]) して最善近似
-//   → これが「拘束を満たした上での最小二乗的な解」
-// ============================================================
-function chooseCB(PA, R, L, phi) {
-  const au = vdot(PA.center, PA.u);
-  const av = vdot(PA.center, PA.v);
-  const dA = vdot(PA.center, PA.normal);
-  const r2 = R*R - dA*dA;
-  const lim = L * 0.55;
+  const clamp = p => ({ u: Math.max(-half, Math.min(half, p.u)), v: Math.max(-half, Math.min(half, p.v)) });
+  const cEnd = clamp(lEnd), cOther = clamp(lOther);
 
-  let alpha, beta;
-  if(r2 > 0) {
-    const r = Math.sqrt(r2);
-    alpha = r * Math.cos(phi) - au;
-    beta  = r * Math.sin(phi) - av;
-    // クランプ（プレート面内に収める = 最小二乗近似の本質）
-    alpha = Math.max(-lim, Math.min(lim, alpha));
-    beta  = Math.max(-lim, Math.min(lim, beta));
+  const du = cOther.u - cEnd.u, dv = cOther.v - cEnd.v;
+  const len = Math.sqrt(du*du + dv*dv);
+  if (len < inserted.thick * 2) return null;
+
+  const distToEdge = p => half - Math.max(Math.abs(p.u), Math.abs(p.v));
+  let entry, exit;
+  if (distToEdge(cEnd) < distToEdge(cOther)) {
+    entry = snapToEdge(cEnd, cOther, half);
+    exit = cOther;
   } else {
-    // PA面が球外 → ランダムフォールバック
-    alpha = (rng()-0.5)*L;
-    beta  = (rng()-0.5)*L;
+    entry = snapToEdge(cOther, cEnd, half);
+    exit = cEnd;
   }
-  return vadd(PA.center, vadd(vscale(PA.u, alpha), vscale(PA.v, beta)));
+
+  // Validate: exit must be strictly inside
+  if (!host.inBounds(exit.u, exit.v, host.thick * 0.5)) return null;
+  // Entry must be on edge (within tolerance)
+  if (distToEdge(entry) > host.size * 0.02) return null;
+
+  return { host, inserted, entry, exit, width: inserted.thick * tol };
+}
+
+// Check two slits on same plate for overlap (2D AABB)
+function slitsOverlap(s1, s2) {
+  const expand = Math.max(s1.width, s2.width) / 2 + 1e-3;
+  function aabb(s) {
+    return {
+      minU: Math.min(s.entry.u, s.exit.u) - expand,
+      maxU: Math.max(s.entry.u, s.exit.u) + expand,
+      minV: Math.min(s.entry.v, s.exit.v) - expand,
+      maxV: Math.max(s.entry.v, s.exit.v) + expand,
+    };
+  }
+  const a = aabb(s1), b = aabb(s2);
+  return !(a.maxU < b.minU || b.maxU < a.minU || a.maxV < b.minV || b.maxV < a.minV);
 }
 
 // ============================================================
-// ランダムグロース（球面最小二乗近似付き）
-//
-//   ランダム性の出所:
-//   - 最初のプレート: 法線も中心もランダム（軸アライメントなし）
-//   - n_B のθ: 完全ランダム（直交は数学で保証）
-//   - φ: 完全ランダム（PA面内の方向 → 球面の切断円上の点を選ぶ）
-//   → 人為的な摂動は一切加えない
+// Check if two plates physically interfere.
+// Connected plates (sharing a slit) are allowed to intersect
+// along their slit only. Here we use a conservative check:
+// If their OBBs DON'T intersect → no interference.
+// If OBBs DO intersect AND they are NOT connected → interference.
+// (Connected plates are handled by their slit geometry.)
 // ============================================================
-async function generateNetwork(N, L, T, slitTol, seed, radius) {
-  rngSeed(seed);
-
-  // 最初のプレート: 球面上のランダム点 + 完全ランダム法線（軸非依存）
-  const initCenter = vscale(vnorm(new V3(rng()*2-1, rng()*2-1, rng()*2-1)), radius);
-  const initNormal = vnorm(new V3(rng()*2-1, rng()*2-1, rng()*2-1)); // 球外法線ではない！
-  const p0 = new Plate(0, initCenter, initNormal, L, T);
-  const plates = [p0];
-  const frontier = [{plate:p0, failCount:0}];
-
-  const MAX_TRIAL = 400;
-  const MAX_FAIL  = 800;
-  let attempts=0, successes=0;
-
-  LOG(`シード:${seed} / 目標:${N}枚 / 球半径:${radius}mm`);
-
-  while(plates.length < N && frontier.length > 0) {
-    const fi = Math.floor(rng()*frontier.length);
-    const fp = frontier[fi];
-    const PA = fp.plate;
-    let added = false;
-
-    for(let trial=0; trial<MAX_TRIAL; trial++) {
-      attempts++;
-
-      // ─── c_B: 球面への最小二乗近似 ─────────────────────
-      const phi   = rng()*Math.PI*2;   // PA面内の方向（完全ランダム）
-      const c_B   = chooseCB(PA, radius, L, phi);
-
-      // ─── n_B: θ完全ランダム（直交を数学的に保証）───────
-      // これが「軸に並行でない角度のバリエーション」
-      const theta = rng()*Math.PI*2;
-      const n_B   = vadd(vscale(PA.u, Math.cos(theta)), vscale(PA.v, Math.sin(theta)));
-
-      const PB = new Plate(plates.length, c_B, n_B, L, T);
-
-      // ─── 干渉チェック（PA以外の全プレート） ─────────────
-      let ok = true;
-      for(const existing of plates) {
-        if(existing.id===PA.id) continue;
-        if(PB.intersects(existing)){ ok=false; break; }
-      }
-      if(!ok) continue;
-
-      // ─── スリット計算 ─────────────────────────────────
-      const res = computeSlits(PA, PB, slitTol);
-      if(!res) continue;
-
-      // ─── スリット重複チェック ─────────────────────────
-      for(const s of PA.slits) if(slitsOverlap(s,res.slitA)){ ok=false; break; }
-      if(!ok) continue;
-      for(const s of PB.slits) if(slitsOverlap(s,res.slitB)){ ok=false; break; }
-      if(!ok) continue;
-
-      // ─── 追加成功 ────────────────────────────────────
-      PA.slits.push(res.slitA);
-      PB.slits.push(res.slitB);
-      PA.neighbors.push(PB.id);
-      PB.neighbors.push(PA.id);
-      plates.push(PB);
-      frontier.push({plate:PB, failCount:0});
-      successes++;
-      added = true;
-
-      if(plates.length%5===0){
-        LOG(`  ${plates.length}枚 (試行${attempts}回, 成功率${(successes/attempts*100).toFixed(1)}%)`);
-        await new Promise(r=>setTimeout(r,1));
-      }
-      break;
-    }
-
-    if(!added){
-      fp.failCount++;
-      if(fp.failCount>=MAX_FAIL){
-        frontier.splice(fi,1);
-        LOG(`  板#${PA.id}をフロンティアから除去 (残り${frontier.length}個)`);
-      }
-    }
-  }
-
-  const slitCount = plates.reduce((s,p)=>s+p.slits.length,0)/2;
-  LOG(`完了: ${plates.length}枚, スリット${slitCount}対`);
-  LOG(`試行${attempts}回, 成功率${(successes/attempts*100).toFixed(1)}%`);
-  return plates;
+function platesInterfere(pA, pB) {
+  return obbIntersect(pA.obb(), pB.obb());
 }
 
 // ============================================================
-// メイン
+// BFS connectivity
+// ============================================================
+function largestComponent(plates) {
+  if (!plates.length) return [];
+  const adj = new Map(plates.map(p => [p.id, new Set(p.neighbors)]));
+  const visited = new Set();
+  let best = [];
+  for (const p of plates) {
+    if (visited.has(p.id)) continue;
+    const comp = [];
+    const q = [p.id];
+    while (q.length) {
+      const id = q.shift();
+      if (visited.has(id)) continue;
+      visited.add(id); comp.push(id);
+      (adj.get(id) || new Set()).forEach(nid => { if (!visited.has(nid)) q.push(nid); });
+    }
+    if (comp.length > best.length) best = comp;
+  }
+  return best;
+}
+
+// ============================================================
+// Main Optimizer
 // ============================================================
 let PLATES = [];
 
+// ============================================================
+// Auto-calculate optimal density based on sphere radius and plate size
+// ============================================================
+function autoOptimalDensity() {
+  const R = +document.getElementById('targetRadius').value;
+  const L = +document.getElementById('plateSize').value;
+  const shape = document.getElementById('targetShape').value;
+
+  let surfaceArea;
+  if (shape === 'sphere') {
+    surfaceArea = 4 * Math.PI * R * R;
+  } else if (shape === 'hemisphere') {
+    surfaceArea = 2 * Math.PI * R * R;
+  } else {
+    const H = +document.getElementById('cylHeight').value;
+    surfaceArea = 2 * Math.PI * R * H;
+  }
+
+  // Theoretical plate count: surface area / plate area
+  // Factor 0.85 accounts for checkerboard gaps and slit failures
+  const N_optimal = Math.round(surfaceArea / (L * L) * 0.85);
+  // densityHint: grid cells needed ≈ N_optimal / 0.9 (connection success rate)
+  const hint = Math.max(5, Math.round(N_optimal / 0.9));
+
+  document.getElementById('density').value = hint;
+  document.getElementById('optimal-n').textContent = `≈${N_optimal} plates`;
+  LOG(`Auto density set: ${hint} (target ~${N_optimal} plates for R=${R}, L=${L})`);
+}
+
+function updateOptimalN() {
+  const R = +document.getElementById('targetRadius').value;
+  const L = +document.getElementById('plateSize').value;
+  const shape = document.getElementById('targetShape').value;
+  let surfaceArea;
+  if (shape === 'sphere') surfaceArea = 4 * Math.PI * R * R;
+  else if (shape === 'hemisphere') surfaceArea = 2 * Math.PI * R * R;
+  else { const H = +document.getElementById('cylHeight').value; surfaceArea = 2 * Math.PI * R * H; }
+  const N = Math.round(surfaceArea / (L * L) * 0.85);
+  const el = document.getElementById('optimal-n');
+  if (el) el.textContent = `≈${N} plates`;
+}
+
 async function runOptimize() {
-  const size    = +document.getElementById('plateSize').value;
-  const thick   = +document.getElementById('plateThick').value;
-  const N       = +document.getElementById('density').value;
-  const radius  = +document.getElementById('targetRadius').value;
+  const size   = +document.getElementById('plateSize').value;
+  const thick  = +document.getElementById('plateThick').value;
+  const radius = +document.getElementById('targetRadius').value;
+  const shape  = document.getElementById('targetShape').value;
+  const densityHint = +document.getElementById('density').value;
   const slitTol = +document.getElementById('slitTol').value;
-  let   seed    = +document.getElementById('rngSeed').value;
-  if(!seed){ seed = Math.floor(Math.random()*99999)+1; document.getElementById('rngSeed').value=seed; }
+  const cylH   = +document.getElementById('cylHeight').value;
 
   document.getElementById('log').textContent = '';
-  LOG(`▶ size=${size}mm, thick=${thick}mm, R=${radius}mm, N=${N}, seed=${seed}`);
 
-  PLATES = await generateNetwork(N, size, thick, slitTol, seed, radius);
+  // ================================================================
+  // DESIGN: Checkerboard UV-grid — equal-area sampling (v7)
+  //
+  // Key fix from checkerboard v2:
+  //   v2 used uniform φ-sampling (equal angle spacing) → polar bias
+  //   (too many plates near poles, too few near equator)
+  //
+  //   v7 uses equal-area sampling: cos(φ) is uniformly spaced
+  //   → each grid cell represents equal solid angle
+  //   → uniform plate density across the sphere
+  //
+  // Also: nU:nV = 2:1 ratio (θ spans 2π, φ spans π → natural aspect ratio)
+  // ================================================================
 
-  // 連結確認
-  const idMap=new Map(PLATES.map(p=>[p.id,p]));
-  const vis=new Set(), q=[PLATES[0].id]; vis.add(PLATES[0].id);
-  while(q.length){ const id=q.shift(); (idMap.get(id)?.neighbors||[]).forEach(n=>{ if(!vis.has(n)){vis.add(n);q.push(n);} }); }
-  const conn = vis.size===PLATES.length;
+  // Equal-area grid: nU:nV ≈ 2:1 for sphere
+  const nV = Math.max(3, Math.round(Math.sqrt(densityHint * 0.8)));
+  const nU = Math.max(4, Math.round(nV * 2));
+  LOG(`Grid: ${nU}×${nV} = ${nU*nV} candidates (equal-area, 2:1 ratio)`);
 
-  STAT('st-plates',    PLATES.length);
-  STAT('st-slits',     PLATES.reduce((s,p)=>s+p.slits.length,0)/2);
-  STAT('st-connected', conn?`✓ ${PLATES.length}枚`:`${vis.size}/${PLATES.length}`);
+  let idCtr = 0;
+  const grid = []; // grid[ui][vi] = Plate
 
-  let maxR=0;
-  for(const p of PLATES) maxR=Math.max(maxR, vlen(p.center));
-  STAT('st-coverage',  `実半径 ${maxR.toFixed(0)}mm`);
+  for (let ui = 0; ui < nU; ui++) {
+    const col = [];
+    for (let vi = 0; vi < nV; vi++) {
+      let center, phiTan, thetaTan;
 
-  renderScene(PLATES, radius);
-  LOG('✓ 描画完了');
+      if (shape === 'sphere' || shape === 'hemisphere') {
+        const theta = (ui / nU) * Math.PI * 2;
+        // Equal-area sampling: cos(φ) uniformly spaced → each cell = equal solid angle
+        // tNorm ∈ (0, 1) naturally avoids exact poles (uses cell centers)
+        const tNorm = (vi + 0.5) / nV;
+        let phi;
+        if (shape === 'hemisphere') {
+          // φ ∈ [0, π/2]: cos(φ) goes from 1→0; equal-area: cos(φ) = 1 - tNorm
+          phi = Math.acos(Math.max(0, 1 - tNorm));
+        } else {
+          // φ ∈ [0, π]: cos(φ) goes from 1→-1; equal-area: cos(φ) = 1 - 2*tNorm
+          phi = Math.acos(1 - 2 * tNorm);
+        }
+
+        const sP = Math.sin(phi), cP = Math.cos(phi);
+        const sT = Math.sin(theta), cT = Math.cos(theta);
+
+        center   = new V3(sP * cT * radius, cP * radius, sP * sT * radius);
+        phiTan   = normalize(new V3(cP * cT, -sP, cP * sT));   // d/dφ
+        thetaTan = normalize(new V3(-sT, 0, cT));               // d/dθ
+        // phiTan · thetaTan = cP·cT·(-sT) + 0 + cP·sT·cT = 0 ✓
+
+      } else { // cylinder
+        const theta = (ui / nU) * Math.PI * 2;
+        const y = ((vi + 0.5) / nV - 0.5) * cylH;
+        center   = new V3(Math.cos(theta) * radius, y, Math.sin(theta) * radius);
+        thetaTan = normalize(new V3(-Math.sin(theta), 0, Math.cos(theta))); // azimuthal
+        phiTan   = new V3(0, 1, 0);                                         // axial
+        // thetaTan · phiTan = 0 ✓
+      }
+
+      // Checkerboard: alternate normal family
+      const normal = (ui + vi) % 2 === 0 ? phiTan : thetaTan;
+      const p = new Plate(idCtr++, center, normal, size, thick);
+      p._ui = ui; p._vi = vi;
+      col.push(p);
+    }
+    grid.push(col);
+  }
+
+  // ---- Connect adjacent grid cells that have perpendicular normals ----
+  LOG('Connecting slit pairs...');
+  let slitsMade = 0, slitsFailed = 0;
+
+  // 4-connected neighbours (horizontal + vertical in grid)
+  const dirs = [[1, 0], [0, 1], [1, 1], [1, -1]]; // include diagonals for richer mesh
+
+  for (let ui = 0; ui < nU; ui++) {
+    for (let vi = 0; vi < nV; vi++) {
+      const pA = grid[ui][vi];
+      for (const [du, dv] of dirs) {
+        const nui = ui + du;
+        const nvi = ((vi + dv) + nV) % nV; // wrap in V for cylinder/sphere
+        if (nui >= nU) continue;
+
+        const pB = grid[nui][nvi];
+        // Only connect perpendicular-normal pairs
+        if (Math.abs(dot(pA.normal, pB.normal)) >= 0.15) continue;
+        // Avoid duplicate edges
+        if (pA.neighbors.includes(pB.id)) continue;
+
+        const result = computeSlits(pA, pB, slitTol);
+        if (!result) { slitsFailed++; continue; }
+        const { slitA, slitB } = result;
+
+        // Slit-overlap check
+        let overlap = false;
+        for (const s of pA.slits) { if (slitsOverlap(s, slitA)) { overlap = true; break; } }
+        if (!overlap) for (const s of pB.slits) { if (slitsOverlap(s, slitB)) { overlap = true; break; } }
+        if (overlap) { slitsFailed++; continue; }
+
+        pA.slits.push(slitA);
+        pB.slits.push(slitB);
+        pA.neighbors.push(pB.id);
+        pB.neighbors.push(pA.id);
+        slitsMade++;
+      }
+    }
+  }
+  LOG(`Slit connections: ${slitsMade}  failed: ${slitsFailed}`);
+
+  // ---- Keep plates that have at least one connection ----
+  const allPlates = grid.flat().filter(p => p.neighbors.length > 0);
+
+  // ---- Largest connected component ----
+  const compIds = new Set(largestComponent(allPlates));
+  const final = allPlates.filter(p => compIds.has(p.id));
+
+  for (const p of final) {
+    p.slits    = p.slits.filter(s => compIds.has(s.inserted.id));
+    p.neighbors = p.neighbors.filter(id => compIds.has(id));
+  }
+
+  LOG(`Connected component: ${final.length} / ${allPlates.length} (isolated: ${nU*nV - allPlates.length})`);
+  PLATES = final;
+
+  const totalSlits = final.reduce((a, p) => a + p.slits.length, 0);
+  // Compute sphere coverage quality: average |center| vs target radius
+  let avgDist = 0, maxDist = 0;
+  for (const p of final) {
+    const d = Math.abs(Math.sqrt(dot(p.center, p.center)) - radius);
+    avgDist += d; maxDist = Math.max(maxDist, d);
+  }
+  if (final.length) avgDist /= final.length;
+
+  STAT('st-plates',    final.length);
+  STAT('st-slits',     totalSlits);
+  STAT('st-connected', final.length > 0 ? `✓ (${final.length})` : '✗');
+  STAT('st-coverage',  ((final.length / (nU * nV)) * 100).toFixed(0) + '%');
+  STAT('st-deviation', final.length ? `avg ${avgDist.toFixed(1)}mm / max ${maxDist.toFixed(1)}mm` : '—');
+
+  LOG('Rendering...');
+  renderScene(final);
+  LOG('Done.');
 }
 
 // ============================================================
-// Three.js レンダリング
-//
-// 修正: setFromUnitVectors(Z→normal) ではなく
-//       makeBasis(u, v, normal) で正確な基底を使う
-//       → スリットの位置・向きが正確になる
+// Three.js Scene
 // ============================================================
-let scene, camera, renderer, _sph;
+let scene, camera, renderer;
 
 function initRenderer() {
   const canvas = document.getElementById('canvas3d');
-  renderer = new THREE.WebGLRenderer({ canvas, antialias:true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  renderer.setPixelRatio(window.devicePixelRatio);
   renderer.setClearColor(0x1a1a2e);
-  window.renderer = renderer;
+  window.renderer = renderer; // expose for sidebar resize
 
   scene = new THREE.Scene();
-  camera = new THREE.PerspectiveCamera(55, canvas.clientWidth/canvas.clientHeight, 1, 50000);
-  window.camera = camera;
+  camera = new THREE.PerspectiveCamera(60, canvas.clientWidth / canvas.clientHeight, 1, 20000);
+  camera.position.set(0, 200, 800);
+  window.camera = camera; // expose for sidebar resize
 
   scene.add(new THREE.AmbientLight(0xffffff, 0.5));
-  const dir = new THREE.DirectionalLight(0xffffff, 0.7);
-  dir.position.set(1,2,1.5); scene.add(dir);
+  const dl = new THREE.DirectionalLight(0xffffff, 0.9);
+  dl.position.set(1, 2, 1); scene.add(dl);
 
-  _sph = {theta:0.4, phi:1.1, r:600};
-  const tgt = new THREE.Vector3();
-  function uc(){
+  // Orbit controls
+  let dragging = false, rightDrag = false;
+  let lx = 0, ly = 0;
+  let sph = { theta: 0.3, phi: 1.0, r: 800 };
+  const target = new THREE.Vector3();
+
+  function updateCam() {
     camera.position.set(
-      tgt.x+_sph.r*Math.sin(_sph.phi)*Math.sin(_sph.theta),
-      tgt.y+_sph.r*Math.cos(_sph.phi),
-      tgt.z+_sph.r*Math.sin(_sph.phi)*Math.cos(_sph.theta)
+      target.x + sph.r * Math.sin(sph.phi) * Math.sin(sph.theta),
+      target.y + sph.r * Math.cos(sph.phi),
+      target.z + sph.r * Math.sin(sph.phi) * Math.cos(sph.theta)
     );
-    camera.lookAt(tgt);
+    camera.lookAt(target);
   }
-  uc();
+  updateCam();
 
-  let drag=false, rDrag=false, lx=0, ly=0;
-  canvas.addEventListener('mousedown',e=>{drag=true;rDrag=e.button===2;lx=e.clientX;ly=e.clientY;e.preventDefault();});
-  canvas.addEventListener('contextmenu',e=>e.preventDefault());
-  window.addEventListener('mouseup',()=>drag=false);
-  window.addEventListener('mousemove',e=>{
-    if(!drag) return;
+  const el = canvas;
+  el.addEventListener('mousedown', e => { dragging=true; rightDrag=(e.button===2); lx=e.clientX; ly=e.clientY; e.preventDefault(); });
+  el.addEventListener('contextmenu', e => e.preventDefault());
+  window.addEventListener('mouseup', () => dragging=false);
+  window.addEventListener('mousemove', e => {
+    if (!dragging) return;
     const dx=e.clientX-lx, dy=e.clientY-ly; lx=e.clientX; ly=e.clientY;
-    if(rDrag){
-      const r=new THREE.Vector3().crossVectors(camera.getWorldDirection(new THREE.Vector3()),camera.up).normalize();
-      tgt.addScaledVector(r,-dx*0.5).addScaledVector(camera.up,dy*0.5);
+    if (rightDrag) {
+      const right = new THREE.Vector3().crossVectors(camera.getWorldDirection(new THREE.Vector3()), camera.up).normalize();
+      target.addScaledVector(right, -dx*0.5);
+      target.addScaledVector(camera.up, dy*0.5);
     } else {
-      _sph.theta-=dx*0.005;
-      _sph.phi=Math.max(0.1,Math.min(Math.PI-0.1,_sph.phi+dy*0.005));
+      sph.theta -= dx*0.005;
+      sph.phi = Math.max(0.05, Math.min(Math.PI-0.05, sph.phi + dy*0.005));
     }
-    uc();
+    updateCam();
   });
-  canvas.addEventListener('wheel',e=>{_sph.r=Math.max(50,_sph.r+e.deltaY*0.5);uc();e.preventDefault();},{passive:false});
+  el.addEventListener('wheel', e => { sph.r = Math.max(100, sph.r + e.deltaY*0.5); updateCam(); });
 
-  let lT=[];
-  canvas.addEventListener('touchstart',e=>{lT=[...e.touches];e.preventDefault();},{passive:false});
-  canvas.addEventListener('touchmove',e=>{
+  // Touch support
+  let touches = [];
+  el.addEventListener('touchstart', e => { touches = Array.from(e.touches); e.preventDefault(); }, {passive:false});
+  el.addEventListener('touchmove', e => {
+    if (e.touches.length === 1) {
+      const t = e.touches[0], prev = touches[0];
+      if (prev) {
+        sph.theta -= (t.clientX - prev.clientX) * 0.005;
+        sph.phi = Math.max(0.05, Math.min(Math.PI-0.05, sph.phi + (t.clientY - prev.clientY) * 0.005));
+      }
+    } else if (e.touches.length === 2) {
+      const d0 = Math.hypot(touches[0].clientX-touches[1].clientX, touches[0].clientY-touches[1].clientY);
+      const d1 = Math.hypot(e.touches[0].clientX-e.touches[1].clientX, e.touches[0].clientY-e.touches[1].clientY);
+      sph.r = Math.max(100, sph.r * (d0/d1));
+    }
+    touches = Array.from(e.touches);
+    updateCam();
     e.preventDefault();
-    if(e.touches.length===1&&lT.length>=1){
-      _sph.theta-=(e.touches[0].clientX-lT[0].clientX)*0.005;
-      _sph.phi=Math.max(0.1,Math.min(Math.PI-0.1,_sph.phi+(e.touches[0].clientY-lT[0].clientY)*0.005));
-    } else if(e.touches.length===2&&lT.length===2){
-      const d0=Math.hypot(lT[0].clientX-lT[1].clientX,lT[0].clientY-lT[1].clientY);
-      const d1=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
-      if(d0>1){ _sph.r=Math.max(50,_sph.r*d0/d1); }
-    }
-    lT=[...e.touches]; uc();
-  },{passive:false});
-  canvas.addEventListener('touchend',e=>{lT=[...e.touches];});
-  window.addEventListener('resize',()=>{
-    camera.aspect=canvas.clientWidth/canvas.clientHeight;
+  }, {passive:false});
+
+  window.addEventListener('resize', () => {
+    camera.aspect = canvas.clientWidth / canvas.clientHeight;
     camera.updateProjectionMatrix();
-    renderer.setSize(canvas.clientWidth,canvas.clientHeight,false);
+    renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
   });
-  renderer.setSize(canvas.clientWidth,canvas.clientHeight,false);
+  renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
   animate();
-
-  // カメラ外部から更新できるようにする
-  window._uc = uc;
 }
 
-function animate(){ requestAnimationFrame(animate); renderer.render(scene,camera); }
-
-// 法線→HSL色
-function normalToColor(n) {
-  const hue=((Math.atan2(n.y,n.x)/Math.PI+1)*0.5+n.z*0.3)%1;
-  return new THREE.Color().setHSL(hue, 0.78, 0.58);
+function animate() {
+  requestAnimationFrame(animate);
+  renderer.render(scene, camera);
 }
 
-// ============================================================
-// renderScene
-//   - プレート: makeBasis(p.u, p.v, p.normal) で正確な向き
-//   - スリット: slitLen/slitWid をワールド座標で計算して正確配置
-// ============================================================
-function renderScene(plates, radius) {
-  for(let i=scene.children.length-1;i>=0;i--){ if(!scene.children[i].isLight) scene.remove(scene.children[i]); }
-  scene.add(new THREE.AxesHelper(radius*0.15));
+// Color by normal direction (hue = angle)
+function normalColor(n) {
+  // Map normal sphere direction to hue
+  const hue = (Math.atan2(n.z, n.x) / (Math.PI * 2) + 1) % 1;
+  return new THREE.Color().setHSL(hue, 0.7, 0.55);
+}
 
-  // 参照球（半透明ワイヤーフレーム）
+function renderScene(plates) {
+  while (scene.children.length > 2) scene.remove(scene.children[scene.children.length-1]);
+  scene.add(new THREE.AxesHelper(80));
+
+  const r = +document.getElementById('targetRadius').value;
   scene.add(new THREE.Mesh(
-    new THREE.SphereGeometry(radius, 32, 16),
-    new THREE.MeshBasicMaterial({color:0x334466, wireframe:true, transparent:true, opacity:0.08})
+    new THREE.SphereGeometry(r, 32, 20),
+    new THREE.MeshBasicMaterial({ color: 0x223344, wireframe: true, transparent:true, opacity:0.1 })
   ));
 
-  const slitMat = new THREE.MeshBasicMaterial({
-    color: 0xffcc00, side: THREE.DoubleSide, transparent: true, opacity: 0.95
-  });
-
   plates.forEach(p => {
-    const col = normalToColor(p.normal);
-    const plateMat = new THREE.MeshLambertMaterial({
-      color: col, transparent: true, opacity: 0.70, side: THREE.DoubleSide
-    });
-
-    // ── プレート本体 ──────────────────────────────────
-    // makeBasis(u, v, normal): PlaneGeometry のデフォルト XY面 → プレートのローカル座標系へ
-    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(p.size, p.size), plateMat);
+    const col = normalColor(p.normal);
+    const mat = new THREE.MeshLambertMaterial({ color: col, transparent:true, opacity:0.72, side:THREE.DoubleSide });
+    const geo = new THREE.BoxGeometry(p.size, p.size, p.thick);
+    const mesh = new THREE.Mesh(geo, mat);
     mesh.position.copy(p.center);
-    mesh.quaternion.setFromRotationMatrix(
-      new THREE.Matrix4().makeBasis(p.u, p.v, p.normal)
-    );
+    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1), new THREE.Vector3(p.normal.x, p.normal.y, p.normal.z));
     scene.add(mesh);
 
-    // ── スリット ──────────────────────────────────────
+    // Slit visualization (yellow lines)
     p.slits.forEach(s => {
-      const eu=s.entry.u, ev=s.entry.v;
-      const xu=s.exit.u,  xv=s.exit.v;
-      const du=xu-eu, dv=xv-ev;
-      const l=Math.sqrt(du*du+dv*dv);
-      if(l<EPS) return;
-
-      // スリット長さ方向（ワールド座標）
-      const slitLen = vadd(vscale(p.u, du/l), vscale(p.v, dv/l));
-      // スリット幅方向 = normal × len（法線に直交、長さ方向に直交）
-      const slitWid = vcross(p.normal, slitLen);
-
-      // PlaneGeometry: X=width方向, Y=length方向, Z=normal方向
-      const sm = new THREE.Mesh(new THREE.PlaneGeometry(s.width, l), slitMat);
-      sm.position.copy(p.localToWorld((eu+xu)*0.5, (ev+xv)*0.5));
-      sm.quaternion.setFromRotationMatrix(
-        new THREE.Matrix4().makeBasis(slitWid, slitLen, p.normal)
-      );
-      scene.add(sm);
+      const wEntry = p.localToWorld(s.entry.u, s.entry.v, 0);
+      const wExit  = p.localToWorld(s.exit.u,  s.exit.v,  0);
+      const geo2 = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(wEntry.x, wEntry.y, wEntry.z),
+        new THREE.Vector3(wExit.x,  wExit.y,  wExit.z)
+      ]);
+      scene.add(new THREE.Line(geo2, new THREE.LineBasicMaterial({ color: 0xffff00, linewidth: 2 })));
     });
   });
-
-  // カメラ距離を球半径に合わせてリセット
-  _sph.r = radius * 3.5;
-  if(window._uc) window._uc();
 }
 
 // ============================================================
-// Export
+// CSV Export
 // ============================================================
 function exportCSV() {
-  if(!PLATES.length){alert('先に生成を実行してください');return;}
-  const rows=['id,cx,cy,cz,nx,ny,nz,num_slits,neighbor_ids'];
-  PLATES.forEach((p,i)=>rows.push([
-    i,p.center.x.toFixed(2),p.center.y.toFixed(2),p.center.z.toFixed(2),
-    p.normal.x.toFixed(4),p.normal.y.toFixed(4),p.normal.z.toFixed(4),
-    p.slits.length, p.neighbors.join(';')
-  ].join(',')));
-  rows.push('','plate_id,slit_idx,other_plate_id,entry_u,entry_v,exit_u,exit_v,width_mm');
-  PLATES.forEach((p,i)=>p.slits.forEach((s,si)=>rows.push([
-    i,si,s.inserted.id,
-    s.entry.u.toFixed(2),s.entry.v.toFixed(2),
-    s.exit.u.toFixed(2),s.exit.v.toFixed(2),
-    s.width.toFixed(3)
-  ].join(','))));
-  download('slit_plates.csv',rows.join('\n'),'text/csv');
-}
-
-function exportDXF() {
-  if(!PLATES.length){alert('先に生成を実行してください');return;}
-  const cols=+document.getElementById('dxfCols').value;
-  const sp  =+document.getElementById('dxfSpacing').value;
-  const L   =PLATES[0].size;
-  let dxf='';
-  PLATES.forEach((p,idx)=>{
-    const col=idx%cols, row=Math.floor(idx/cols);
-    const ox=col*(L+sp), oy=-row*(L+sp), h=L/2;
-    dxf+=dxfRect(ox-h,oy-h,ox+h,oy+h,'PLATES');
-    p.slits.forEach(s=>{
-      const eu=s.entry.u+ox,ev=s.entry.v+oy;
-      const xu=s.exit.u+ox, xv=s.exit.v+oy;
-      const du=xu-eu,dv=xv-ev,l=Math.sqrt(du*du+dv*dv);
-      if(l<EPS) return;
-      const hw=s.width/2, nx=-dv/l*hw, ny=du/l*hw;
-      dxf+=dxfLine(eu+nx,ev+ny,xu+nx,xv+ny,'SLITS')
-          +dxfLine(xu+nx,xv+ny,xu-nx,xv-ny,'SLITS')
-          +dxfLine(xu-nx,xv-ny,eu-nx,ev-ny,'SLITS')
-          +dxfLine(eu-nx,ev-ny,eu+nx,ev+ny,'SLITS');
+  if (!PLATES.length) { alert('Run optimization first'); return; }
+  const rows = ['id,cx,cy,cz,nx,ny,nz,num_slits'];
+  PLATES.forEach((p, i) => {
+    rows.push([i, p.center.x.toFixed(2), p.center.y.toFixed(2), p.center.z.toFixed(2),
+      p.normal.x.toFixed(4), p.normal.y.toFixed(4), p.normal.z.toFixed(4), p.slits.length].join(','));
+  });
+  rows.push('');
+  rows.push('plate_id,slit_idx,other_id,entry_u,entry_v,exit_u,exit_v,width');
+  PLATES.forEach((p, i) => {
+    p.slits.forEach((s, si) => {
+      rows.push([i, si, s.inserted.id,
+        s.entry.u.toFixed(2), s.entry.v.toFixed(2),
+        s.exit.u.toFixed(2),  s.exit.v.toFixed(2),
+        s.width.toFixed(3)].join(','));
     });
-    dxf+=dxfText(ox-h+2,oy-h+2,String(idx+1),'LABELS',L*0.08);
   });
-  dxf+='ENDSEC\n0\nEOF\n';
-  download('slit_plates.dxf',dxfHeader()+dxf,'application/dxf');
+  download('slit_plates.csv', rows.join('\n'), 'text/csv');
 }
 
-function dxfHeader(){return`0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n`;}
-function dxfRect(x1,y1,x2,y2,l){return dxfLine(x1,y1,x2,y1,l)+dxfLine(x2,y1,x2,y2,l)+dxfLine(x2,y2,x1,y2,l)+dxfLine(x1,y2,x1,y1,l);}
-function dxfLine(x1,y1,x2,y2,l){return`0\nLINE\n8\n${l}\n10\n${x1.toFixed(4)}\n20\n${y1.toFixed(4)}\n30\n0.0\n11\n${x2.toFixed(4)}\n21\n${y2.toFixed(4)}\n31\n0.0\n`;}
-function dxfText(x,y,t,l,h){return`0\nTEXT\n8\n${l}\n10\n${x.toFixed(4)}\n20\n${y.toFixed(4)}\n30\n0.0\n40\n${h.toFixed(4)}\n1\n${t}\n`;}
+// ============================================================
+// DXF Export (sorted by z-coordinate)
+// ============================================================
+function exportDXF() {
+  if (!PLATES.length) { alert('Run optimization first'); return; }
+  const cols    = +document.getElementById('dxfCols').value;
+  const spacing = +document.getElementById('dxfSpacing').value;
+  const size    = PLATES[0].size;
 
+  const sorted = [...PLATES].sort((a, b) => b.center.z - a.center.z);
+  let body = '';
+  sorted.forEach((p, idx) => {
+    const ox = (idx % cols) * (size + spacing);
+    const oy = -Math.floor(idx / cols) * (size + spacing);
+    const h = size / 2;
+
+    body += dxfRect(ox-h, oy-h, ox+h, oy+h, 'PLATES');
+    body += dxfText(ox-h+2, oy-h+2, String(idx+1), 'LABELS', size*0.08);
+
+    p.slits.forEach(s => {
+      const eu = s.entry.u + ox, ev = s.entry.v + oy;
+      const xu = s.exit.u  + ox, xv = s.exit.v  + oy;
+      const du = xu-eu, dv = xv-ev;
+      const len = Math.sqrt(du*du+dv*dv);
+      if (len < 1e-9) return;
+      const hw = s.width/2;
+      const nx = -dv/len*hw, ny = du/len*hw;
+      body += dxfLine(eu+nx,ev+ny, xu+nx,xv+ny,'SLITS');
+      body += dxfLine(xu+nx,xv+ny, xu-nx,xv-ny,'SLITS');
+      body += dxfLine(xu-nx,xv-ny, eu-nx,ev-ny,'SLITS');
+      body += dxfLine(eu-nx,ev-ny, eu+nx,ev+ny,'SLITS');
+    });
+  });
+  const full = '0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n'
+    + body + '0\nENDSEC\n0\nEOF\n';
+  download('slit_plates.dxf', full, 'application/dxf');
+}
+
+function dxfRect(x1,y1,x2,y2,layer) {
+  return dxfLine(x1,y1,x2,y1,layer)+dxfLine(x2,y1,x2,y2,layer)+
+         dxfLine(x2,y2,x1,y2,layer)+dxfLine(x1,y2,x1,y1,layer);
+}
+function dxfLine(x1,y1,x2,y2,layer) {
+  return `0\nLINE\n8\n${layer}\n10\n${x1.toFixed(4)}\n20\n${y1.toFixed(4)}\n30\n0\n11\n${x2.toFixed(4)}\n21\n${y2.toFixed(4)}\n31\n0\n`;
+}
+function dxfText(x,y,txt,layer,h) {
+  return `0\nTEXT\n8\n${layer}\n10\n${x.toFixed(4)}\n20\n${y.toFixed(4)}\n30\n0\n40\n${h.toFixed(4)}\n1\n${txt}\n`;
+}
+
+// ============================================================
+// Top View PNG
+// ============================================================
 function exportTopView() {
-  if(!PLATES.length){alert('先に生成を実行してください');return;}
-  const scale=+document.getElementById('topScale').value;
-  const L=PLATES[0].size;
-  let maxC=0;
-  PLATES.forEach(p=>{ maxC=Math.max(maxC,Math.abs(p.center.x),Math.abs(p.center.z)); });
-  const dim=Math.ceil((maxC*2+L)*scale*1.1);
-  const cnv=document.getElementById('topview-canvas');
-  cnv.width=dim; cnv.height=dim;
-  const ctx=cnv.getContext('2d');
-  ctx.fillStyle='#1a1a2e'; ctx.fillRect(0,0,dim,dim);
-  const cx=dim/2, cy=dim/2;
-  PLATES.forEach((p,i)=>{
-    const x=cx+p.center.x*scale, y=cy-p.center.z*scale, half=L*scale/2;
-    const col=normalToColor(p.normal);
-    ctx.fillStyle=`rgba(${(col.r*255)|0},${(col.g*255)|0},${(col.b*255)|0},0.7)`;
-    ctx.fillRect(x-half,y-half,half*2,half*2);
-    ctx.strokeStyle='#fff'; ctx.lineWidth=0.5; ctx.strokeRect(x-half,y-half,half*2,half*2);
-    ctx.fillStyle='#fff'; ctx.font=`${Math.max(8,L*scale*0.2)}px monospace`; ctx.textAlign='center';
-    ctx.fillText(String(i+1),x,y+4);
+  if (!PLATES.length) { alert('Run optimization first'); return; }
+  const sc   = +document.getElementById('topScale').value;
+  const size = PLATES[0].size;
+  const r    = +document.getElementById('targetRadius').value;
+  const dim  = Math.ceil((r*2+size)*sc*1.15);
+
+  const canvas = document.getElementById('topview-canvas');
+  canvas.width = canvas.height = dim;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#1a1a2e';
+  ctx.fillRect(0,0,dim,dim);
+  const cx = dim/2, cy = dim/2;
+
+  PLATES.forEach((p, i) => {
+    const x = cx + p.center.x*sc, y = cy - p.center.z*sc;
+    const h = size*sc/2;
+    const c = normalColor(p.normal);
+    ctx.fillStyle   = `rgba(${~~(c.r*255)},${~~(c.g*255)},${~~(c.b*255)},0.6)`;
+    ctx.strokeStyle = `rgb(${~~(c.r*255)},${~~(c.g*255)},${~~(c.b*255)})`;
+    ctx.lineWidth = 1;
+    ctx.fillRect(x-h, y-h, h*2, h*2);
+    ctx.strokeRect(x-h, y-h, h*2, h*2);
+    ctx.fillStyle = '#fff';
+    ctx.font = `${Math.max(8, h*0.4)}px monospace`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(String(i+1), x, y);
   });
-  cnv.toBlob(blob=>{
-    const url=URL.createObjectURL(blob),a=document.createElement('a');
-    a.href=url; a.download='slit_plates_topview.png'; a.click(); URL.revokeObjectURL(url);
+
+  canvas.toBlob(blob => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'slit_topview.png'; a.click();
+    URL.revokeObjectURL(url);
   });
 }
 
-function download(fn,c,m){
-  const b=new Blob([c],{type:m}),u=URL.createObjectURL(b),a=document.createElement('a');
-  a.href=u; a.download=fn; a.click(); URL.revokeObjectURL(u);
+// ============================================================
+// Download helper
+// ============================================================
+function download(name, content, mime) {
+  const blob = new Blob([content], { type: mime });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name; a.click();
 }
 
+// ============================================================
+// Init
+// ============================================================
 initRenderer();
