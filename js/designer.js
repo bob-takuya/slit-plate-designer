@@ -324,6 +324,8 @@ async function runOptimize() {
   STAT('st-connected', PLATES.length>0?'✓':'—');
   STAT('st-coverage',  computeCoverage(PLATES, radius) + '%');
   renderScene(PLATES);
+  // Refresh 2D preview if it's currently visible
+  if(typeof updateSVGPreview==='function') updateSVGPreview();
 }
 
 // ============================================================
@@ -494,8 +496,8 @@ function exportDXF() {
   download('slit_plates.dxf',full,'application/dxf');
 }
 
-function exportSVG() {
-  if(!PLATES.length){alert('Run optimization first');return;}
+function buildSVGString() {
+  if(!PLATES.length) return '<svg xmlns="http://www.w3.org/2000/svg"><text x="10" y="20" font-size="14" fill="#999">No plates yet — run Optimize first</text></svg>';
   const cols=+document.getElementById('dxfCols').value, spacing=+document.getElementById('dxfSpacing').value, size=PLATES[0].size;
   const sorted=[...PLATES].sort((a,b)=>b.center.z-a.center.z);
   const numRows=Math.ceil(sorted.length/cols);
@@ -505,7 +507,7 @@ function exportSVG() {
 
   let s=`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">\n`;
   s+=`<rect width="100%" height="100%" fill="#fff"/>\n`;
-  s+=`<style>.plate{fill:none;stroke:#333;stroke-width:0.5}.lbl{font:bold ${fs_label}px sans-serif;fill:#555}.slit{fill:#444}.sid{font:bold ${fs_id}px sans-serif;fill:#c0392b}</style>\n`;
+  s+=`<style>.plate{fill:#f8f8f8;stroke:#333;stroke-width:0.5}.lbl{font:bold ${fs_label}px sans-serif;fill:#555}.slit{fill:#333}.sid{font:bold ${fs_id}px sans-serif;fill:#c0392b}</style>\n`;
 
   sorted.forEach((p,idx)=>{
     const cx=pad+(idx%cols)*(size+spacing)+size/2;
@@ -527,7 +529,12 @@ function exportSVG() {
     });
   });
   s+='</svg>\n';
-  download('slit_plates.svg',s,'image/svg+xml');
+  return s;
+}
+
+function exportSVG() {
+  if(!PLATES.length){alert('Run optimization first');return;}
+  download('slit_plates.svg', buildSVGString(), 'image/svg+xml');
 }
 
 function dxfRect(x1,y1,x2,y2,l){return dxfLine(x1,y1,x2,y1,l)+dxfLine(x2,y1,x2,y2,l)+dxfLine(x2,y2,x1,y2,l)+dxfLine(x1,y2,x1,y1,l);}
