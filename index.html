@@ -25,6 +25,14 @@
     #stats span { color: #e0e0e0; font-weight: 600; }
     #log { background: #0a0a1a; border-radius: 4px; padding: 8px; font-size: 11px; color: #60a060; font-family: monospace; height: 80px; overflow-y: auto; margin-top: 8px; }
     #topview-canvas { display: none; }
+    /* View switcher tabs (3D / 2D) */
+    #view-tab-bar { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 5; display: flex; gap: 4px; }
+    .view-tab { padding: 5px 16px; border: 1px solid #0f3460; border-radius: 20px; background: rgba(22,33,62,0.85); color: #a0a0c0; font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.15s; }
+    .view-tab:hover { background: rgba(15,52,96,0.95); color: #e0e0e0; }
+    .view-tab.active { background: #e94560; border-color: #e94560; color: #fff; }
+    /* SVG preview panel */
+    #svg-preview { display: none; position: absolute; inset: 0; overflow: auto; background: #f0f0f0; padding: 16px; }
+    #svg-preview svg { display: block; margin: auto; box-shadow: 0 2px 12px rgba(0,0,0,0.18); background: #fff; }
     .tab-bar { display: flex; gap: 4px; margin-bottom: 12px; }
     .tab { flex: 1; padding: 6px; background: #0f3460; border: 1px solid #1a4a8a; border-radius: 4px; cursor: pointer; font-size: 11px; text-align: center; color: #a0a0c0; }
     .tab.active { background: #e94560; border-color: #e94560; color: white; }
@@ -122,7 +130,12 @@
 </div>
 
 <div id="main">
+  <div id="view-tab-bar">
+    <button class="view-tab active" id="vtab-3d" onclick="switchView('3d')">3D</button>
+    <button class="view-tab"        id="vtab-2d" onclick="switchView('2d')">2D 展開図</button>
+  </div>
   <canvas id="canvas3d"></canvas>
+  <div id="svg-preview"></div>
   <div id="overlay">
     Drag: rotate &nbsp;|&nbsp; Scroll: zoom &nbsp;|&nbsp; Right drag: pan
   </div>
@@ -163,6 +176,32 @@ function switchTab(name) {
   document.querySelectorAll('.tab').forEach((t,i) => t.classList.toggle('active', ['params','export'][i]===name));
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
   document.getElementById('tab-'+name).classList.add('active');
+}
+
+function switchView(mode) {
+  const canvas = document.getElementById('canvas3d');
+  const preview = document.getElementById('svg-preview');
+  const overlay = document.getElementById('overlay');
+  document.getElementById('vtab-3d').classList.toggle('active', mode==='3d');
+  document.getElementById('vtab-2d').classList.toggle('active', mode==='2d');
+  if (mode === '2d') {
+    canvas.style.display = 'none';
+    overlay.style.display = 'none';
+    preview.style.display = 'block';
+    if (!preview.hasChildNodes()) updateSVGPreview();
+  } else {
+    canvas.style.display = 'block';
+    overlay.style.display = '';
+    preview.style.display = 'none';
+  }
+}
+
+function updateSVGPreview() {
+  const preview = document.getElementById('svg-preview');
+  if (typeof buildSVGString === 'function') {
+    preview.innerHTML = buildSVGString();
+    // Enable pinch-zoom on mobile via SVG viewBox (already set)
+  }
 }
 document.getElementById('targetShape').addEventListener('change', e => {
   document.getElementById('cylHeight-wrap').style.display = e.target.value==='cylinder'?'block':'none';
