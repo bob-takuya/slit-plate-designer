@@ -470,7 +470,7 @@ function renderScene(plates) {
     scene.add(mesh);
 
     // Plate number — above plate center, slightly offset along normal
-    const plateLabel = makeTextSprite(String(idx + 1), {
+    const plateLabel = makeTextSprite(String(p.id + 1), {
       color: '#ffffff', bgColor: 'rgba(0,0,0,0.55)', scaleFactor: labelScale
     });
     const labelPos = add(p.center, scale(p.normal, p.thick / 2 + labelScale * 0.6));
@@ -534,7 +534,7 @@ function exportDXF() {
   sorted.forEach((p,idx)=>{
     const ox=(idx%cols)*(size+spacing), oy=-Math.floor(idx/cols)*(size+spacing), h=size/2;
     body+=dxfRect(ox-h,oy-h,ox+h,oy+h,'PLATES');
-    body+=dxfText(ox-h+2,oy+h-size*0.1,String(idx+1),'LABELS',size*0.08);
+    body+=dxfText(ox-h+2,oy+h-size*0.1,String(p.id+1),'LABELS',size*0.08);
     p.slits.forEach(s=>{
       const ce=slitCutExit(s);  // draw only to midpoint (physical cut = edge-side half)
       const eu=s.entry.u+ox,ev=s.entry.v+oy,xu=ce.u+ox,xv=ce.v+oy;
@@ -574,7 +574,7 @@ function buildSVGString() {
     const cy=pad+Math.floor(idx/cols)*(size+spacing)+size/2;
     const h=size/2;
     s+=`<rect class="plate" x="${cx-h}" y="${cy-h}" width="${size}" height="${size}"/>\n`;
-    s+=`<text class="lbl" x="${(cx-h+2).toFixed(1)}" y="${(cy-h+size*0.09).toFixed(1)}">${idx+1}</text>\n`;
+    s+=`<text class="lbl" x="${(cx-h+2).toFixed(1)}" y="${(cy-h+size*0.09).toFixed(1)}">${p.id+1}</text>\n`;
     p.slits.forEach(sl=>{
       const ce=slitCutExit(sl);  // draw only to midpoint (physical cut = edge-side half)
       const eu=sl.entry.u+cx, ev=sl.entry.v+cy;
