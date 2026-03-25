@@ -277,6 +277,9 @@ async function runOptimize() {
         for(const s of pA.slits) { if(slitsOverlap(s,res.slitA)){slitOK=false;break;} }
         if(!slitOK) continue;
 
+        // 拘束0: pBはpAと物理的に交わること（必要条件）
+        if(!obbIntersect(pA.obb(), pB.obb())) continue;
+
         // 拘束3: 物理干渉なし（pA以外の全プレート）
         let noInter=true;
         for(const p of PLATES) { if(p===pA) continue; if(obbIntersect(p.obb(),pB.obb())){noInter=false;break;} }
@@ -301,6 +304,7 @@ async function runOptimize() {
     const pairId = ++slitPairCounter;
     result.slitA.pairId = pairId;
     result.slitB.pairId = pairId;
+    result.slitB.host = pB;  // fix: update host to the actual committed plate object
     pA.slits.push(result.slitA);
     pB.slits.push(result.slitB);
     pA.neighbors.push(pB.id);
@@ -497,6 +501,24 @@ function renderScene(plates) {
         slitLabel.position.set(sp.x, sp.y, sp.z);
         scene.add(slitLabel);
       }
+    });
+  });
+
+  // スリット接続線: 同じpairIdを持つ2枚のプレート中心を橙色の線で結ぶ
+  // → 3Dで「どのプレートとどのプレートが繋がっているか」を可視化
+  const drawnPairs = new Set();
+  plates.forEach(p => {
+    p.neighbors.forEach(neighborId => {
+      const key = Math.min(p.id, neighborId) + '_' + Math.max(p.id, neighborId);
+      if(drawnPairs.has(key)) return;
+      drawnPairs.add(key);
+      const other = plates[neighborId];
+      if(!other) return;
+      const geoConn = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(p.center.x, p.center.y, p.center.z),
+        new THREE.Vector3(other.center.x, other.center.y, other.center.z)
+      ]);
+      scene.add(new THREE.Line(geoConn, new THREE.LineBasicMaterial({color:0xff8800, transparent:true, opacity:0.55})));
     });
   });
 }
