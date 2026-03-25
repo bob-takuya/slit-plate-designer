@@ -210,6 +210,68 @@ function computeSlits(pA, pB, tol) {
 }
 
 // ============================================================
+// Clip polygon to square plate boundary (Sutherland-Hodgman)
+// Returns array of {u,v} points that lie inside [-half, half]²
+// ============================================================
+function clipPolygonToSquare(pts, half) {
+  function clipEdge(input, nx, ny, d) {
+    if (input.length === 0) return [];
+    const output = [];
+    for (let i = 0; i < input.length; i++) {
+      const a = input[i], b = input[(i + 1) % input.length];
+      const da = nx * a.u + ny * a.v - d;
+      const db = nx * b.u + ny * b.v - d;
+      if (da <= 0) output.push(a);
+      if ((da < 0) !== (db < 0)) {
+        const t = da / (da - db);
+        output.push({ u: a.u + t * (b.u - a.u), v: a.v + t * (b.v - a.v) });
+      }
+    }
+    return output;
+  }
+  let p = pts;
+  p = clipEdge(p,  1,  0, half);  // u <= +half
+  p = clipEdge(p, -1,  0, half);  // u >= -half
+  p = clipEdge(p,  0,  1, half);  // v <= +half
+  p = clipEdge(p,  0, -1, half);  // v >= -half
+  return p;
+}
+
+// Build the correct slit polygon in local plate UV coordinates.
+//
+// Problem with uniform rectangles:
+//   The entry side (eu±nx, ev±ny) can protrude outside the plate boundary
+//   when the slit direction is not perpendicular to the edge, leaving a
+//   region that is not cut and a region that is cut outside the plate.
+//
+// Fix: extend both long sides well past the entry point (outward), then
+//   clip the resulting quad to the plate boundary.  The clipping naturally
+//   trims each long side at the exact edge intersection, giving the correct
+//   tapered shape where entry-side width == 0 (V at the edge).
+//
+function slitPolygonLocal(s) {
+  const half = s.host.size / 2;
+  const eu = s.entry.u, ev = s.entry.v;
+  const xu = s.exit.u,  xv = s.exit.v;
+  const du = xu - eu,   dv = xv - ev;
+  const len = Math.sqrt(du * du + dv * dv);
+  if (len < 1e-9) return [];
+  const hw = s.width / 2;
+  const nx = -dv / len * hw, ny = du / len * hw;  // perp, right side
+  // Extend entry side well outside the plate so the clipper can trim it cleanly.
+  const ext = half * 3;
+  const extu = eu - du / len * ext;
+  const extv = ev - dv / len * ext;
+  const raw = [
+    { u: extu + nx, v: extv + ny },  // A – right, extended past entry
+    { u: xu   + nx, v: xv   + ny },  // B – right, at exit (mid-point M)
+    { u: xu   - nx, v: xv   - ny },  // C – left,  at exit
+    { u: extu - nx, v: extv - ny },  // D – left,  extended past entry
+  ];
+  return clipPolygonToSquare(raw, half);
+}
+
+// ============================================================
 // Slit overlap check (2D AABB)
 // ============================================================
 function slitsOverlap(s1, s2) {
@@ -724,16 +786,14 @@ function exportDXF() {
     body+=dxfRect(ox-h,oy-h,ox+h,oy+h,'PLATES');
     body+=dxfText(ox-h+2,oy+h-size*0.1,String(p.id+1),'LABELS',size*0.08);
     p.slits.forEach(s=>{
-      const ce=slitCutExit(s);  // draw only to midpoint (physical cut = edge-side half)
-      const eu=s.entry.u+ox,ev=s.entry.v+oy,xu=ce.u+ox,xv=ce.v+oy;
-      const du=xu-eu,dv=xv-ev,len=Math.sqrt(du*du+dv*dv);
-      if(len<1e-9)return;
-      const hw=s.width/2,nx=-dv/len*hw,ny=du/len*hw;
-      body+=dxfLine(eu+nx,ev+ny,xu+nx,xv+ny,'SLITS');
-      body+=dxfLine(xu+nx,xv+ny,xu-nx,xv-ny,'SLITS');
-      body+=dxfLine(xu-nx,xv-ny,eu-nx,ev-ny,'SLITS');
-      body+=dxfLine(eu-nx,ev-ny,eu+nx,ev+ny,'SLITS');
-      // Slit pair ID on SLIT_IDS layer
+      // Use clipped polygon: long sides extended past entry, then trimmed to plate boundary.
+      // This ensures no overshoot outside the plate and correct taper at the edge.
+      const poly=slitPolygonLocal(s);
+      if(poly.length<3)return;
+      for(let i=0;i<poly.length;i++){
+        const a=poly[i],b=poly[(i+1)%poly.length];
+        body+=dxfLine(a.u+ox,a.v+oy,b.u+ox,b.v+oy,'SLITS');
+      }
       if(s.pairId!=null){
         const lp=slitLabelPos(s,ox,oy,size);
         body+=dxfText(lp.x,lp.y,String(s.pairId),'SLIT_IDS',size*0.065);
@@ -764,13 +824,11 @@ function buildSVGString() {
     s+=`<rect class="plate" x="${cx-h}" y="${cy-h}" width="${size}" height="${size}"/>\n`;
     s+=`<text class="lbl" x="${(cx-h+2).toFixed(1)}" y="${(cy-h+size*0.09).toFixed(1)}">${p.id+1}</text>\n`;
     p.slits.forEach(sl=>{
-      const ce=slitCutExit(sl);  // draw only to midpoint (physical cut = edge-side half)
-      const eu=sl.entry.u+cx, ev=sl.entry.v+cy;
-      const xu=ce.u+cx,        xv=ce.v+cy;
-      const du=xu-eu, dv=xv-ev, len=Math.sqrt(du*du+dv*dv);
-      if(len<1e-9)return;
-      const hw=sl.width/2, nx=-dv/len*hw, ny=du/len*hw;
-      s+=`<polygon class="slit" points="${(eu+nx).toFixed(2)},${(ev+ny).toFixed(2)} ${(xu+nx).toFixed(2)},${(xv+ny).toFixed(2)} ${(xu-nx).toFixed(2)},${(xv-ny).toFixed(2)} ${(eu-nx).toFixed(2)},${(ev-ny).toFixed(2)}"/>\n`;
+      // Clip slit polygon to plate boundary for correct cut path
+      const poly=slitPolygonLocal(sl);
+      if(poly.length<3)return;
+      const pts=poly.map(pt=>`${(pt.u+cx).toFixed(2)},${(pt.v+cy).toFixed(2)}`).join(' ');
+      s+=`<polygon class="slit" points="${pts}"/>\n`;
       if(sl.pairId!=null){
         const lp=slitLabelPos(sl,cx,cy,size);
         s+=`<text class="sid" x="${lp.x.toFixed(2)}" y="${lp.y.toFixed(2)}">${sl.pairId}</text>\n`;
