@@ -639,11 +639,12 @@ function selectPlate(plateId) {
   selectedPlateId = plateId;
   renderScene(PLATES);
   updateInfoPanel(plateId);
-  // デスクトップ: Info タブへ自動切替
-  if (window.innerWidth > 640 && typeof switchTab === 'function') {
-    switchTab('info');
+  if (window.innerWidth > 640) {
+    // デスクトップ: ビューワー右オーバーレイを表示
+    const panel = document.getElementById('info-panel-desktop');
+    if (panel) panel.classList.add('visible');
   } else {
-    // モバイル: 下部パネルを表示
+    // モバイル: 下部ボトムシートを表示
     const panel = document.getElementById('info-panel-mobile');
     if (panel) panel.classList.add('visible');
   }
@@ -653,20 +654,21 @@ function clearSelection() {
   selectedPlateId = null;
   renderScene(PLATES);
   updateInfoPanel(null);
-  const panel = document.getElementById('info-panel-mobile');
-  if (panel) panel.classList.remove('visible');
+  document.getElementById('info-panel-desktop')?.classList.remove('visible');
+  document.getElementById('info-panel-mobile')?.classList.remove('visible');
 }
 
 function updateInfoPanel(plateId) {
-  const desktopEl  = document.getElementById('info-content');
-  const mobileTitleEl   = document.getElementById('info-mobile-title');
-  const mobileContentEl = document.getElementById('info-mobile-content');
+  const desktopTitleEl   = document.getElementById('info-desktop-title');
+  const desktopContentEl = document.getElementById('info-desktop-content');
+  const mobileTitleEl    = document.getElementById('info-mobile-title');
+  const mobileContentEl  = document.getElementById('info-mobile-content');
 
   if (plateId === null || !PLATES.length || !PLATES[plateId]) {
-    const empty = '<p style="color:var(--faint);font-size:11px;text-align:center;padding:24px 0 8px;">3Dビューワーのプレートをクリックして選択</p>';
-    if (desktopEl)  desktopEl.innerHTML = empty;
-    if (mobileTitleEl)   mobileTitleEl.textContent = '—';
-    if (mobileContentEl) mobileContentEl.innerHTML = '';
+    if (desktopTitleEl)   desktopTitleEl.textContent = '—';
+    if (desktopContentEl) desktopContentEl.innerHTML = '';
+    if (mobileTitleEl)    mobileTitleEl.textContent = '—';
+    if (mobileContentEl)  mobileContentEl.innerHTML = '';
     return;
   }
 
@@ -688,9 +690,10 @@ function updateInfoPanel(plateId) {
       スリット数: <strong style="color:var(--text)">${p.slits.length}</strong>本
     </div>${rows}`;
 
-  if (desktopEl)  desktopEl.innerHTML = `<div style="margin-bottom:12px;font-size:15px;font-weight:700;color:var(--accent)">${title}</div>${html}`;
-  if (mobileTitleEl)   mobileTitleEl.textContent = title;
-  if (mobileContentEl) mobileContentEl.innerHTML = html;
+  if (desktopTitleEl)   desktopTitleEl.textContent = title;
+  if (desktopContentEl) desktopContentEl.innerHTML = html;
+  if (mobileTitleEl)    mobileTitleEl.textContent = title;
+  if (mobileContentEl)  mobileContentEl.innerHTML = html;
 }
 
 function initClickHandler() {
