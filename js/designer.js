@@ -277,7 +277,10 @@ async function runOptimize() {
         for(const s of pA.slits) { if(slitsOverlap(s,res.slitA)){slitOK=false;break;} }
         if(!slitOK) continue;
 
-        // 拘束0: pBはpAと物理的に交わること（必要条件）
+        // 拘束0a: 中心間距離がサイズ以内（端同士が微かに触れるだけの遠距離接続を禁止）
+        if(vdist(c_B, pA.center) > size) continue;
+
+        // 拘束0b: pBはpAと物理的に交わること（必要条件）
         if(!obbIntersect(pA.obb(), pB.obb())) continue;
 
         // 拘束3: 物理干渉なし（pA以外の全プレート）
