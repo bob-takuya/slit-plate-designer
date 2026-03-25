@@ -204,6 +204,8 @@ function slitsOverlap(s1, s2) {
 // ============================================================
 let PLATES = [];
 let slitPairCounter = 0;  // incremented each time a slit pair is committed
+let selectedPlateId = null;   // currently selected plate id (null = none)
+const plateMeshMap = new Map(); // plateId -> THREE.Mesh (for raycasting)
 
 async function runOptimize() {
   const size     = +document.getElementById('plateSize').value;
@@ -408,6 +410,7 @@ function initRenderer() {
   window.addEventListener('resize',()=>{camera.aspect=canvas.clientWidth/canvas.clientHeight;camera.updateProjectionMatrix();renderer.setSize(canvas.clientWidth,canvas.clientHeight,false);});
   renderer.setSize(canvas.clientWidth,canvas.clientHeight,false);
   animate();
+  initClickHandler();
 }
 
 function animate() { requestAnimationFrame(animate); renderer.render(scene,camera); }
@@ -461,19 +464,41 @@ function renderScene(plates) {
     new THREE.MeshBasicMaterial({color:0x223344,wireframe:true,transparent:true,opacity:0.08})
   ));
 
-  // Label scale proportional to plate size
+  plateMeshMap.clear();
   const labelScale = plates.length ? plates[0].size * 0.28 : 28;
 
-  plates.forEach((p, idx) => {
-    const col=normalColor(p.normal);
-    const mat=new THREE.MeshLambertMaterial({color:col,transparent:true,opacity:0.72,side:THREE.DoubleSide});
-    const geo=new THREE.BoxGeometry(p.size,p.size,p.thick);
-    const mesh=new THREE.Mesh(geo,mat);
-    mesh.position.copy(p.center);
-    mesh.quaternion.setFromRotationMatrix(makeBasis(p.u,p.v,p.normal));
-    scene.add(mesh);
+  // 選択状態の計算
+  const hasSelection = selectedPlateId !== null && plates[selectedPlateId] != null;
+  const focusSet = new Set(); // 選択プレート + その隣接プレート
+  if (hasSelection) {
+    focusSet.add(selectedPlateId);
+    for (const nId of plates[selectedPlateId].neighbors) focusSet.add(nId);
+  }
 
-    // Plate number — color matches the plate face color
+  plates.forEach((p) => {
+    const col = normalColor(p.normal);
+    const isDimmed  = hasSelection && !focusSet.has(p.id);
+    const isSelected = p.id === selectedPlateId;
+
+    // マテリアル: 非選択時はワイヤーフレームで暗く
+    const mat = isDimmed
+      ? new THREE.MeshBasicMaterial({color:0x2a2a2a, wireframe:true, transparent:true, opacity:0.3})
+      : new THREE.MeshLambertMaterial({
+          color: col, transparent: true,
+          opacity: isSelected ? 0.90 : 0.72,
+          side: THREE.DoubleSide
+        });
+
+    const geo  = new THREE.BoxGeometry(p.size, p.size, p.thick);
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.copy(p.center);
+    mesh.quaternion.setFromRotationMatrix(makeBasis(p.u, p.v, p.normal));
+    scene.add(mesh);
+    plateMeshMap.set(p.id, mesh); // raycasting 用に登録
+
+    if (isDimmed) return; // 暗くしたプレートはラベル・スリット非表示
+
+    // プレート番号ラベル
     const plateLabel = makeTextSprite(String(p.id + 1), {
       color: '#' + col.getHexString(), bgColor: 'rgba(0,0,0,0.55)', scaleFactor: labelScale
     });
@@ -481,18 +506,17 @@ function renderScene(plates) {
     plateLabel.position.set(labelPos.x, labelPos.y, labelPos.z);
     scene.add(plateLabel);
 
-    // Slit lines + slit pair ID labels
+    // スリット線 + スリットIDラベル
     p.slits.forEach(s => {
       const ce = slitCutExit(s);
       const wEntry = p.localToWorld(s.entry.u, s.entry.v, 0);
       const wCut   = p.localToWorld(ce.u, ce.v, 0);
-      const geo2 = new THREE.BufferGeometry().setFromPoints([
+      const geo2   = new THREE.BufferGeometry().setFromPoints([
         new THREE.Vector3(wEntry.x, wEntry.y, wEntry.z),
         new THREE.Vector3(wCut.x,   wCut.y,   wCut.z)
       ]);
-      scene.add(new THREE.Line(geo2, new THREE.LineBasicMaterial({color:0xffff00,linewidth:2})));
+      scene.add(new THREE.Line(geo2, new THREE.LineBasicMaterial({color:0xffff00, linewidth:2})));
 
-      // Slit ID label — at the cut end, just above the plate face
       if (s.pairId != null) {
         const slitLabel = makeTextSprite(String(s.pairId), {
           color: '#e94560', bgColor: 'rgba(0,0,0,0.5)', scaleFactor: labelScale * 0.7
@@ -504,16 +528,16 @@ function renderScene(plates) {
     });
   });
 
-  // スリット接続線: 同じpairIdを持つ2枚のプレート中心を橙色の線で結ぶ
-  // → 3Dで「どのプレートとどのプレートが繋がっているか」を可視化
+  // 接続線: 選択中は選択プレートの接続のみ、非選択時は全接続を表示
   const drawnPairs = new Set();
   plates.forEach(p => {
+    if (hasSelection && p.id !== selectedPlateId) return;
     p.neighbors.forEach(neighborId => {
       const key = Math.min(p.id, neighborId) + '_' + Math.max(p.id, neighborId);
-      if(drawnPairs.has(key)) return;
+      if (drawnPairs.has(key)) return;
       drawnPairs.add(key);
       const other = plates[neighborId];
-      if(!other) return;
+      if (!other) return;
       const geoConn = new THREE.BufferGeometry().setFromPoints([
         new THREE.Vector3(p.center.x, p.center.y, p.center.z),
         new THREE.Vector3(other.center.x, other.center.y, other.center.z)
@@ -521,6 +545,125 @@ function renderScene(plates) {
       scene.add(new THREE.Line(geoConn, new THREE.LineBasicMaterial({color:0xff8800, transparent:true, opacity:0.55})));
     });
   });
+}
+
+// ============================================================
+// Plate selection (click / tap)
+// ============================================================
+function selectPlate(plateId) {
+  selectedPlateId = plateId;
+  renderScene(PLATES);
+  updateInfoPanel(plateId);
+  // デスクトップ: Info タブへ自動切替
+  if (window.innerWidth > 640 && typeof switchTab === 'function') {
+    switchTab('info');
+  } else {
+    // モバイル: 下部パネルを表示
+    const panel = document.getElementById('info-panel-mobile');
+    if (panel) panel.classList.add('visible');
+  }
+}
+
+function clearSelection() {
+  selectedPlateId = null;
+  renderScene(PLATES);
+  updateInfoPanel(null);
+  const panel = document.getElementById('info-panel-mobile');
+  if (panel) panel.classList.remove('visible');
+}
+
+function updateInfoPanel(plateId) {
+  const desktopEl  = document.getElementById('info-content');
+  const mobileTitleEl   = document.getElementById('info-mobile-title');
+  const mobileContentEl = document.getElementById('info-mobile-content');
+
+  if (plateId === null || !PLATES.length || !PLATES[plateId]) {
+    const empty = '<p style="color:var(--faint);font-size:11px;text-align:center;padding:24px 0 8px;">3Dビューワーのプレートをクリックして選択</p>';
+    if (desktopEl)  desktopEl.innerHTML = empty;
+    if (mobileTitleEl)   mobileTitleEl.textContent = '—';
+    if (mobileContentEl) mobileContentEl.innerHTML = '';
+    return;
+  }
+
+  const p = PLATES[plateId];
+  const title = `Plate ${p.id + 1}`;
+  let rows = '';
+  if (p.slits.length === 0) {
+    rows = '<p style="color:var(--faint);font-size:11px;">接続なし</p>';
+  } else {
+    p.slits.forEach(s => {
+      rows += `<div class="slit-row" onclick="selectPlate(${s.inserted.id})">
+        <span class="slit-id">Slit ${s.pairId}</span>
+        <span class="slit-dest">→ Plate ${s.inserted.id + 1}</span>
+      </div>`;
+    });
+  }
+  const html = `
+    <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">
+      スリット数: <strong style="color:var(--text)">${p.slits.length}</strong>本
+    </div>${rows}`;
+
+  if (desktopEl)  desktopEl.innerHTML = `<div style="margin-bottom:12px;font-size:15px;font-weight:700;color:var(--accent)">${title}</div>${html}`;
+  if (mobileTitleEl)   mobileTitleEl.textContent = title;
+  if (mobileContentEl) mobileContentEl.innerHTML = html;
+}
+
+function initClickHandler() {
+  const canvas    = document.getElementById('canvas3d');
+  const raycaster = new THREE.Raycaster();
+  const mouse     = new THREE.Vector2();
+  let dragStart   = null;
+
+  // マウス: ドラッグと区別するため mousedown 位置を記録
+  canvas.addEventListener('mousedown', e => { dragStart = {x: e.clientX, y: e.clientY}; });
+  canvas.addEventListener('click', e => {
+    if (dragStart && Math.hypot(e.clientX - dragStart.x, e.clientY - dragStart.y) > 5) {
+      dragStart = null; return; // ドラッグなのでスキップ
+    }
+    dragStart = null;
+    const rect = canvas.getBoundingClientRect();
+    mouse.x =  ((e.clientX - rect.left) / canvas.clientWidth)  * 2 - 1;
+    mouse.y = -((e.clientY - rect.top)  / canvas.clientHeight) * 2 + 1;
+    raycaster.setFromCamera(mouse, camera);
+    const hits = raycaster.intersectObjects([...plateMeshMap.values()]);
+    if (hits.length) {
+      for (const [id, m] of plateMeshMap) {
+        if (m === hits[0].object) {
+          selectedPlateId === id ? clearSelection() : selectPlate(id);
+          break;
+        }
+      }
+    } else {
+      clearSelection();
+    }
+  });
+
+  // タッチ: タップと区別するため touchstart 位置を記録
+  let touchStart = null;
+  canvas.addEventListener('touchstart', e => {
+    touchStart = e.touches.length === 1 ? {x: e.touches[0].clientX, y: e.touches[0].clientY} : null;
+  }, {passive: true});
+  canvas.addEventListener('touchend', e => {
+    if (!touchStart || e.changedTouches.length !== 1) return;
+    const t = e.changedTouches[0];
+    if (Math.hypot(t.clientX - touchStart.x, t.clientY - touchStart.y) > 12) return;
+    touchStart = null;
+    const rect = canvas.getBoundingClientRect();
+    mouse.x =  ((t.clientX - rect.left) / canvas.clientWidth)  * 2 - 1;
+    mouse.y = -((t.clientY - rect.top)  / canvas.clientHeight) * 2 + 1;
+    raycaster.setFromCamera(mouse, camera);
+    const hits = raycaster.intersectObjects([...plateMeshMap.values()]);
+    if (hits.length) {
+      for (const [id, m] of plateMeshMap) {
+        if (m === hits[0].object) {
+          selectedPlateId === id ? clearSelection() : selectPlate(id);
+          break;
+        }
+      }
+    } else {
+      clearSelection();
+    }
+  }, {passive: true});
 }
 
 // ============================================================

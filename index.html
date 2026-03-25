@@ -131,6 +131,55 @@
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
 
+    /* ===== Info panel (mobile: bottom sheet) ===== */
+    #info-panel-mobile {
+      display: none;
+    }
+    @media (max-width: 640px) {
+      #info-panel-mobile {
+        display: block;
+        position: fixed;
+        bottom: 0; left: 0; right: 0;
+        background: var(--surface);
+        border-top: 2px solid var(--accent);
+        padding: 12px 14px 20px;
+        z-index: 50;
+        max-height: 48vh;
+        overflow-y: auto;
+        transform: translateY(110%);
+        transition: transform 0.25s ease;
+        box-shadow: 0 -4px 20px rgba(0,0,0,0.4);
+      }
+      #info-panel-mobile.visible { transform: translateY(0); }
+      .info-mobile-header {
+        display: flex; justify-content: space-between; align-items: center;
+        margin-bottom: 10px;
+      }
+      .info-mobile-title {
+        font-size: 15px; font-weight: 700; color: var(--accent);
+      }
+      .info-close-btn {
+        background: var(--surface2); border: 1px solid var(--border2);
+        color: var(--muted); border-radius: 3px; cursor: pointer;
+        font-size: 11px; padding: 3px 8px; width: auto; margin: 0;
+      }
+      .info-close-btn:hover { color: var(--text); }
+    }
+    @media (min-width: 641px) {
+      #info-panel-mobile { display: none !important; }
+    }
+
+    /* ===== Info slit row ===== */
+    .slit-row {
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 3px; padding: 8px 10px; margin-bottom: 6px;
+      cursor: pointer; display: flex; justify-content: space-between; align-items: center;
+      transition: border-color 0.15s;
+    }
+    .slit-row:hover { border-color: var(--accent); }
+    .slit-row .slit-id { color: var(--accent); font-weight: 700; font-size: 13px; }
+    .slit-row .slit-dest { color: var(--muted); font-size: 11px; }
+
     /* ===== Desktop (≥641px): side-by-side ===== */
     @media (min-width: 641px) {
       body { display: flex; height: 100vh; overflow: hidden; }
@@ -185,8 +234,9 @@
   <h1>Slit Plate Designer</h1>
 
   <div class="tab-bar">
-    <div class="tab active" onclick="switchTab('params')">Params</div>
-    <div class="tab"        onclick="switchTab('export')">Export</div>
+    <div class="tab active" data-tab="params" onclick="switchTab('params')">Params</div>
+    <div class="tab"        data-tab="export" onclick="switchTab('export')">Export</div>
+    <div class="tab"        data-tab="info"   onclick="switchTab('info')">Info</div>
   </div>
 
   <!-- ===== Params tab ===== -->
@@ -248,6 +298,15 @@
 
     <canvas id="topview-canvas"></canvas>
   </div>
+
+  <!-- ===== Info tab ===== -->
+  <div id="tab-info" class="section">
+    <div id="info-content">
+      <p style="color:var(--faint);font-size:11px;text-align:center;padding:24px 0 8px;">
+        3Dビューワーのプレートをクリックして選択
+      </p>
+    </div>
+  </div>
 </div>
 
 <div id="main">
@@ -262,6 +321,15 @@
   <div id="overlay">
     Drag: rotate &nbsp;|&nbsp; Scroll: zoom &nbsp;|&nbsp; Right drag: pan
   </div>
+</div>
+
+<!-- Mobile info bottom sheet -->
+<div id="info-panel-mobile">
+  <div class="info-mobile-header">
+    <span class="info-mobile-title" id="info-mobile-title">—</span>
+    <button class="info-close-btn" onclick="clearSelection()">✕ 閉じる</button>
+  </div>
+  <div id="info-mobile-content"></div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -294,8 +362,8 @@ window.addEventListener('resize', () => {
 });
 
 function switchTab(name) {
-  document.querySelectorAll('.tab').forEach((t, i) =>
-    t.classList.toggle('active', ['params','export'][i] === name));
+  document.querySelectorAll('.tab').forEach(t =>
+    t.classList.toggle('active', t.dataset.tab === name));
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
   document.getElementById('tab-' + name).classList.add('active');
 }
