@@ -131,40 +131,63 @@ function clipLineToPlate(plate, linePoint, lineDir) {
 // ============================================================
 // Slit geometry helpers
 // ============================================================
-function snapToEdge(pt, other, half) {
-  const du=other.u-pt.u, dv=other.v-pt.v;
-  const len=Math.sqrt(du*du+dv*dv);
-  if(len<1e-9) return { u: Math.sign(pt.u||1)*half, v: pt.v };
-  let t=Infinity;
-  if(Math.abs(du)>1e-9){ const t1=(half-pt.u)/du; if(t1>1e-6)t=Math.min(t,t1); const t2=(-half-pt.u)/du; if(t2>1e-6)t=Math.min(t,t2); }
-  if(Math.abs(dv)>1e-9){ const t1=(half-pt.v)/dv; if(t1>1e-6)t=Math.min(t,t1); const t2=(-half-pt.v)/dv; if(t2>1e-6)t=Math.min(t,t2); }
-  if(!isFinite(t)) return pt;
-  return { u: pt.u+du*t, v: pt.v+dv*t };
+
+// ptをcenterとは逆方向（外側）にスナップしてホストのエッジに当てる。
+// entry点をMから外側に押し出す用途。
+function snapAwayToEdge(pt, center, half) {
+  const du = pt.u - center.u, dv = pt.v - center.v;
+  const len = Math.sqrt(du * du + dv * dv);
+  if (len < 1e-9) return { u: Math.sign(pt.u || 1) * half, v: pt.v };
+  const clamp = t => Math.max(0, t);  // 負のtは無視（内側方向）
+  let t = Infinity;
+  if (Math.abs(du) > 1e-9) {
+    const tA = (half  - pt.u) / du; if (tA >= -1e-6) t = Math.min(t, clamp(tA));
+    const tB = (-half - pt.u) / du; if (tB >= -1e-6) t = Math.min(t, clamp(tB));
+  }
+  if (Math.abs(dv) > 1e-9) {
+    const tA = (half  - pt.v) / dv; if (tA >= -1e-6) t = Math.min(t, clamp(tA));
+    const tB = (-half - pt.v) / dv; if (tB >= -1e-6) t = Math.min(t, clamp(tB));
+  }
+  return isFinite(t) ? { u: pt.u + du * t, v: pt.v + dv * t } : pt;
 }
 
+// ユーザーの指摘通りの正しいスリットジオメトリ:
+//   M   = オーバーラップ [tMin,tMax] の真の中点（2枚が交差する点）
+//   exit = M（スリットの切断端点）
+//   entry = Mから外側方向にプレートエッジまで延ばした点
+//   → ペアのスリットは必ずM（同一の世界座標点）に向かい、等長になる
 function buildSlitOnPlate(host, inserted, linePoint, lineDir, tMin, tMax, tol) {
-  const half = host.size/2;
-  const wEnd   = add(linePoint, scale(lineDir, tMin));
-  const wOther = add(linePoint, scale(lineDir, tMax));
-  const lEnd   = host.worldToLocal(wEnd);
-  const lOther = host.worldToLocal(wOther);
-  const clamp  = p => ({ u: Math.max(-half,Math.min(half,p.u)), v: Math.max(-half,Math.min(half,p.v)) });
-  const cEnd   = clamp(lEnd), cOther = clamp(lOther);
+  const half = host.size / 2;
+
+  // M: オーバーラップ区間の真の中点（世界座標→ローカル座標）
+  const tMid  = (tMin + tMax) / 2;
+  const lMid  = host.worldToLocal(add(linePoint, scale(lineDir, tMid)));   // M in host frame
+  const lNear = host.worldToLocal(add(linePoint, scale(lineDir, tMin)));   // tMin side
+  const lFar  = host.worldToLocal(add(linePoint, scale(lineDir, tMax)));   // tMax side
+
   const distToEdge = p => half - Math.max(Math.abs(p.u), Math.abs(p.v));
-  const du=cOther.u-cEnd.u, dv=cOther.v-cEnd.v;
-  if(Math.sqrt(du*du+dv*dv) < inserted.thick*2) return null;
-  let entry, exit;
-  if(distToEdge(cEnd) < distToEdge(cOther)) { entry=snapToEdge(cEnd,cOther,half); exit=cOther; }
-  else { entry=snapToEdge(cOther,cEnd,half); exit=cEnd; }
-  if(!host.inBounds(exit.u, exit.v, host.thick*0.5)) return null;
-  if(distToEdge(entry) > host.size*0.03) return null;
-  return { host, inserted, entry, exit, width: inserted.thick*tol };
+
+  // エッジに近い方のオーバーラップ端点をエントリー側として選ぶ
+  const lSide = distToEdge(lNear) <= distToEdge(lFar) ? lNear : lFar;
+
+  // Mから外向き方向にスナップしてプレートの物理エッジへ
+  const entry = snapAwayToEdge(lSide, lMid, half);
+  // exit = M（切断端点）
+  const exit  = { u: lMid.u, v: lMid.v };
+
+  // 検証
+  if (distToEdge(entry) > host.size * 0.03) return null;  // エッジ上でない
+  if (!host.inBounds(exit.u, exit.v, host.thick * 0.5))  return null;  // Mが範囲内か
+  const du = exit.u - entry.u, dv = exit.v - entry.v;
+  if (Math.sqrt(du * du + dv * dv) < inserted.thick * 2)  return null;  // スリットが短すぎ
+
+  return { host, inserted, entry, exit, width: inserted.thick * tol };
 }
 
-// Cut endpoint for export/display: only the edge-side half is physically cut.
-// entry→exit spans the full half of the intersection; we draw entry→cutExit only.
+// スリット切断端点 = exit そのもの（= M）
+// 以前は (entry+exit)/2 を使っていたが、exitをMに変えたのでそのまま返す
 function slitCutExit(s) {
-  return { u: (s.entry.u + s.exit.u) / 2, v: (s.entry.v + s.exit.v) / 2 };
+  return { u: s.exit.u, v: s.exit.v };
 }
 
 // ============================================================
