@@ -635,6 +635,32 @@ function renderScene(plates) {
 // ============================================================
 // Plate selection (click / tap)
 // ============================================================
+function onPlateSearch(val) {
+  // sync both inputs
+  ['plate-search-desktop','plate-search-mobile'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el && el.value !== val) el.value = val;
+  });
+
+  const num = parseInt(val, 10);
+  const inputs = document.querySelectorAll('.info-search');
+
+  if (!val || isNaN(num)) {
+    inputs.forEach(el => el.classList.remove('invalid'));
+    clearSelection();
+    return;
+  }
+
+  const idx = num - 1; // 0-based
+  if (!PLATES.length || idx < 0 || idx >= PLATES.length) {
+    inputs.forEach(el => el.classList.add('invalid'));
+    return;
+  }
+
+  inputs.forEach(el => el.classList.remove('invalid'));
+  selectPlate(idx);
+}
+
 function selectPlate(plateId) {
   selectedPlateId = plateId;
   renderScene(PLATES);
@@ -656,6 +682,10 @@ function clearSelection() {
   updateInfoPanel(null);
   document.getElementById('info-panel-desktop')?.classList.remove('visible');
   document.getElementById('info-panel-mobile')?.classList.remove('visible');
+  ['plate-search-desktop','plate-search-mobile'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) { el.value = ''; el.classList.remove('invalid'); }
+  });
 }
 
 function updateInfoPanel(plateId) {
@@ -663,6 +693,13 @@ function updateInfoPanel(plateId) {
   const desktopContentEl = document.getElementById('info-desktop-content');
   const mobileTitleEl    = document.getElementById('info-mobile-title');
   const mobileContentEl  = document.getElementById('info-mobile-content');
+
+  // sync search inputs with current selection
+  const searchVal = (plateId !== null && PLATES[plateId]) ? String(plateId + 1) : '';
+  ['plate-search-desktop','plate-search-mobile'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el && document.activeElement !== el) el.value = searchVal;
+  });
 
   if (plateId === null || !PLATES.length || !PLATES[plateId]) {
     if (desktopTitleEl)   desktopTitleEl.textContent = '—';
