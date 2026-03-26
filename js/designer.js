@@ -683,34 +683,10 @@ function onPlateSearch(val) {
   selectPlate(idx);
 }
 
-// Smoothly fly camera target to a world position
-let _focusTween = null;
-function focusOnPosition(destVec) {
-  if (!window._orbitTarget || !window._orbitUpdateCam) return;
-  if (_focusTween) cancelAnimationFrame(_focusTween);
-  const start = window._orbitTarget.clone();
-  const end   = destVec.clone();
-  const dur   = 400; // ms
-  const t0    = performance.now();
-  function step(now) {
-    const t = Math.min((now - t0) / dur, 1);
-    const ease = 1 - Math.pow(1 - t, 3); // ease-out cubic
-    window._orbitTarget.lerpVectors(start, end, ease);
-    window._orbitUpdateCam();
-    if (t < 1) _focusTween = requestAnimationFrame(step);
-  }
-  _focusTween = requestAnimationFrame(step);
-}
-
 function selectPlate(plateId) {
   selectedPlateId = plateId;
   renderScene(PLATES);
   updateInfoPanel(plateId);
-  // Focus camera on selected plate
-  if (PLATES[plateId]) {
-    const c = PLATES[plateId].center;
-    focusOnPosition(new THREE.Vector3(c.x, c.y, c.z));
-  }
   if (window.innerWidth > 640) {
     // デスクトップ: ビューワー右オーバーレイを表示
     const panel = document.getElementById('info-panel-desktop');
