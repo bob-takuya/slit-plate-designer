@@ -334,6 +334,14 @@
     <button onclick="exportTopView()">⬇ Export PNG</button>
 
     <canvas id="topview-canvas"></canvas>
+
+    <h2>Settings</h2>
+    <div class="btn-row">
+      <button onclick="exportSettings()">⬇ JSON</button>
+      <button onclick="document.getElementById('import-json-input').click()">⬆ JSON</button>
+    </div>
+    <input type="file" id="import-json-input" accept=".json,application/json" style="display:none" onchange="importSettings(event)">
+    <p class="note">設定をJSONファイルでインポート／エクスポート</p>
   </div>
 
 </div>
