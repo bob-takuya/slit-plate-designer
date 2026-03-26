@@ -872,6 +872,48 @@ function exportTopView() {
   canvas.toBlob(blob=>{const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='slit_topview.png';a.click();URL.revokeObjectURL(url);});
 }
 
+const SETTINGS_FIELDS = [
+  'plateSize','plateThick','targetShape','targetRadius','cylHeight',
+  'rngSeed','maxPlates','nRandom','slitTol',
+  'dxfCols','dxfSpacing','topScale'
+];
+
+function exportSettings() {
+  const obj = {};
+  SETTINGS_FIELDS.forEach(id => {
+    const el = document.getElementById(id);
+    if(!el) return;
+    obj[id] = el.tagName === 'SELECT' ? el.value : +el.value;
+  });
+  download('slit-plate-settings.json', JSON.stringify(obj, null, 2), 'application/json');
+}
+
+function importSettings(event) {
+  const file = event.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const obj = JSON.parse(e.target.result);
+      SETTINGS_FIELDS.forEach(id => {
+        if(!(id in obj)) return;
+        const el = document.getElementById(id);
+        if(!el) return;
+        el.value = obj[id];
+        el.dispatchEvent(new Event('change'));
+      });
+      // trigger cylHeight visibility update
+      const shapeEl = document.getElementById('targetShape');
+      if(shapeEl) shapeEl.dispatchEvent(new Event('change'));
+    } catch(err) {
+      alert('JSON parse error: ' + err.message);
+    }
+  };
+  reader.readAsText(file);
+  // reset so the same file can be re-imported
+  event.target.value = '';
+}
+
 function download(name, content, mime) {
   const blob=new Blob([content],{type:mime});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();
 }
