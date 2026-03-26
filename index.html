@@ -207,6 +207,18 @@
       #info-panel-desktop { display: none !important; }
     }
 
+    /* ===== Info cumulative checkbox ===== */
+    .info-cumulative-wrap {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 11px; color: var(--muted);
+      margin-bottom: 10px; cursor: pointer;
+      user-select: none;
+    }
+    .info-cumulative-wrap input[type=checkbox] {
+      width: 13px; height: 13px; accent-color: var(--accent);
+      cursor: pointer; margin: 0;
+    }
+
     /* ===== Info search ===== */
     .info-search-wrap {
       margin-bottom: 10px;
@@ -372,6 +384,10 @@
     <div class="info-search-wrap">
       <input type="number" id="plate-search-desktop" class="info-search" placeholder="Plate #…" min="1" oninput="onPlateSearch(this.value)">
     </div>
+    <label class="info-cumulative-wrap">
+      <input type="checkbox" id="cumulative-desktop" onchange="onCumulativeChange(this.checked)">
+      <span>以前の番号も表示</span>
+    </label>
     <div id="info-desktop-content"></div>
   </div>
 
@@ -397,6 +413,10 @@
   <div class="info-search-wrap">
     <input type="number" id="plate-search-mobile" class="info-search" placeholder="Plate #…" min="1" oninput="onPlateSearch(this.value)">
   </div>
+  <label class="info-cumulative-wrap">
+    <input type="checkbox" id="cumulative-mobile" onchange="onCumulativeChange(this.checked)">
+    <span>以前の番号も表示</span>
+  </label>
   <div id="info-mobile-content"></div>
 </div>
 

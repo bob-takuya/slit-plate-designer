@@ -290,6 +290,7 @@ function slitsOverlap(s1, s2) {
 let PLATES = [];
 let slitPairCounter = 0;  // incremented each time a slit pair is committed
 let selectedPlateId = null;   // currently selected plate id (null = none)
+let showUpToSelected = false; // checkbox: show all plates up to selected id
 const plateMeshMap = new Map(); // plateId -> THREE.Mesh (for raycasting)
 
 async function runOptimize() {
@@ -565,8 +566,16 @@ function renderScene(plates) {
 
   plates.forEach((p) => {
     const col = normalColor(p.normal);
-    const isDimmed  = hasSelection && !focusSet.has(p.id);
-    const isSelected = p.id === selectedPlateId;
+
+    // 累積表示モード: selectedPlateId 以下のプレートをすべてフルで表示
+    let isDimmed, isSelected;
+    if (showUpToSelected && hasSelection) {
+      isSelected = p.id === selectedPlateId;
+      isDimmed   = p.id > selectedPlateId; // 番号が大きいものだけ暗くする
+    } else {
+      isDimmed  = hasSelection && !focusSet.has(p.id);
+      isSelected = p.id === selectedPlateId;
+    }
 
     // マテリアル: 非選択時はワイヤーフレームで暗く
     const mat = isDimmed
@@ -638,6 +647,16 @@ function renderScene(plates) {
 // ============================================================
 // Plate selection (click / tap)
 // ============================================================
+function onCumulativeChange(checked) {
+  showUpToSelected = checked;
+  // sync both checkboxes
+  ['cumulative-desktop', 'cumulative-mobile'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el && el.checked !== checked) el.checked = checked;
+  });
+  renderScene(PLATES);
+}
+
 function onPlateSearch(val) {
   // sync both inputs
   ['plate-search-desktop','plate-search-mobile'].forEach(id => {
