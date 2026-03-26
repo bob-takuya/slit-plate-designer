@@ -207,6 +207,22 @@
       #info-panel-desktop { display: none !important; }
     }
 
+    /* ===== Info search ===== */
+    .info-search-wrap {
+      margin-bottom: 10px;
+    }
+    .info-search {
+      width: 100%; box-sizing: border-box;
+      background: var(--surface2); border: 1px solid var(--border2);
+      border-radius: 3px; color: var(--text); font-size: 12px;
+      padding: 5px 8px;
+      -moz-appearance: textfield;
+    }
+    .info-search::-webkit-outer-spin-button,
+    .info-search::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    .info-search:focus { outline: none; border-color: var(--accent); }
+    .info-search.invalid { border-color: #e05; }
+
     /* ===== Info slit row ===== */
     .slit-row {
       background: var(--surface2); border: 1px solid var(--border);
@@ -353,6 +369,9 @@
       <span class="info-desktop-title" id="info-desktop-title">—</span>
       <button class="info-desktop-close" onclick="clearSelection()">✕</button>
     </div>
+    <div class="info-search-wrap">
+      <input type="number" id="plate-search-desktop" class="info-search" placeholder="Plate #…" min="1" oninput="onPlateSearch(this.value)">
+    </div>
     <div id="info-desktop-content"></div>
   </div>
 
@@ -374,6 +393,9 @@
   <div class="info-mobile-header">
     <span class="info-mobile-title" id="info-mobile-title">—</span>
     <button class="info-close-btn" onclick="clearSelection()">✕ 閉じる</button>
+  </div>
+  <div class="info-search-wrap">
+    <input type="number" id="plate-search-mobile" class="info-search" placeholder="Plate #…" min="1" oninput="onPlateSearch(this.value)">
   </div>
   <div id="info-mobile-content"></div>
 </div>
