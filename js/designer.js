@@ -710,6 +710,57 @@ function clearSelection() {
   });
 }
 
+// ============================================================
+// Build a single-plate 2D preview SVG for the Info panel
+// ============================================================
+function buildPlatePreviewSVG(p) {
+  const size = p.size;
+  const half = size / 2;
+  const pad  = size * 0.18;          // padding around the plate
+  const vw   = size + pad * 2;       // viewBox width/height
+  const cx   = vw / 2;              // plate centre in SVG coords
+  const cy   = vw / 2;
+  const fs_slit  = (size * 0.085).toFixed(2);
+
+  let defs = '';
+  let body = '';
+
+  // — plate outline —
+  body += `<rect x="${(cx - half).toFixed(2)}" y="${(cy - half).toFixed(2)}" width="${size}" height="${size}" fill="#252525" stroke="#555" stroke-width="${(size*0.012).toFixed(2)}" rx="1"/>\n`;
+
+  // — plate number (top-left corner) —
+  body += `<text x="${(cx - half + size*0.05).toFixed(2)}" y="${(cy - half + size*0.12).toFixed(2)}" font-family="monospace" font-size="${(size*0.09).toFixed(2)}" font-weight="bold" fill="#888">${p.id + 1}</text>\n`;
+
+  // — slits —
+  p.slits.forEach(s => {
+    const poly = slitPolygonLocal(s);
+    if (poly.length < 3) return;
+
+    // polygon points in SVG coords (local u,v → shift by cx,cy)
+    const pts = poly.map(pt => `${(pt.u + cx).toFixed(2)},${(pt.v + cy).toFixed(2)}`).join(' ');
+    body += `<polygon points="${pts}" fill="#e0e0e0" opacity="0.9"/>\n`;
+
+    // slit label: positioned near the exit (mid-point) with slight offset
+    if (s.pairId != null) {
+      const lp = slitLabelPos(s, cx, cy, size);
+      // small accent circle behind label for readability
+      body += `<circle cx="${lp.x.toFixed(2)}" cy="${lp.y.toFixed(2)}" r="${(size*0.065).toFixed(2)}" fill="#e94560" opacity="0.85"/>\n`;
+      body += `<text x="${lp.x.toFixed(2)}" y="${(lp.y + size*0.027).toFixed(2)}" text-anchor="middle" font-family="monospace" font-size="${fs_slit}" font-weight="bold" fill="#fff">${s.pairId}</text>\n`;
+    }
+  });
+
+  // edge tick marks for orientation (N/E/S/W)
+  const tk = size * 0.04;
+  [[cx, cy - half - tk, cx, cy - half + tk],
+   [cx, cy + half - tk, cx, cy + half + tk],
+   [cx - half - tk, cy, cx - half + tk, cy],
+   [cx + half - tk, cy, cx + half + tk, cy]].forEach(([x1,y1,x2,y2]) => {
+    body += `<line x1="${x1.toFixed(2)}" y1="${y1.toFixed(2)}" x2="${x2.toFixed(2)}" y2="${y2.toFixed(2)}" stroke="#444" stroke-width="${(size*0.008).toFixed(2)}"/>\n`;
+  });
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="100%" viewBox="0 0 ${vw.toFixed(2)} ${vw.toFixed(2)}" style="display:block;border-radius:6px;background:#1a1a1a;">\n${body}</svg>`;
+}
+
 function updateInfoPanel(plateId) {
   const desktopTitleEl   = document.getElementById('info-desktop-title');
   const desktopContentEl = document.getElementById('info-desktop-content');
@@ -733,6 +784,11 @@ function updateInfoPanel(plateId) {
 
   const p = PLATES[plateId];
   const title = `Plate ${p.id + 1}`;
+
+  // 2D plate preview SVG
+  const previewSVG = buildPlatePreviewSVG(p);
+
+  // slit connection list
   let rows = '';
   if (p.slits.length === 0) {
     rows = '<p style="color:var(--faint);font-size:11px;">接続なし</p>';
@@ -744,8 +800,10 @@ function updateInfoPanel(plateId) {
       </div>`;
     });
   }
+
   const html = `
-    <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">
+    <div class="plate-preview-wrap">${previewSVG}</div>
+    <div style="font-size:11px;color:var(--muted);margin:10px 0 6px;">
       スリット数: <strong style="color:var(--text)">${p.slits.length}</strong>本
     </div>${rows}`;
 
