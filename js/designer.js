@@ -726,7 +726,7 @@ function buildPlatePreviewSVG(p) {
   let body = '';
 
   // — plate outline —
-  body += `<rect x="${(cx - half).toFixed(2)}" y="${(cy - half).toFixed(2)}" width="${size}" height="${size}" fill="#252525" stroke="#555" stroke-width="${(size*0.012).toFixed(2)}" rx="1"/>\n`;
+  body += `<rect x="${(cx - half).toFixed(2)}" y="${(cy - half).toFixed(2)}" width="${size}" height="${size}" fill="#252525" stroke="#555" stroke-width="${(size*0.012).toFixed(2)}"/>\n`;
 
   // — plate number (top-left corner) —
   body += `<text x="${(cx - half + size*0.05).toFixed(2)}" y="${(cy - half + size*0.12).toFixed(2)}" font-family="monospace" font-size="${(size*0.09).toFixed(2)}" font-weight="bold" fill="#888">${p.id + 1}</text>\n`;
@@ -743,9 +743,7 @@ function buildPlatePreviewSVG(p) {
     // slit label: positioned near the exit (mid-point) with slight offset
     if (s.pairId != null) {
       const lp = slitLabelPos(s, cx, cy, size);
-      // small accent circle behind label for readability
-      body += `<circle cx="${lp.x.toFixed(2)}" cy="${lp.y.toFixed(2)}" r="${(size*0.065).toFixed(2)}" fill="#e94560" opacity="0.85"/>\n`;
-      body += `<text x="${lp.x.toFixed(2)}" y="${(lp.y + size*0.027).toFixed(2)}" text-anchor="middle" font-family="monospace" font-size="${fs_slit}" font-weight="bold" fill="#fff">${s.pairId}</text>\n`;
+      body += `<text x="${lp.x.toFixed(2)}" y="${(lp.y + size*0.027).toFixed(2)}" text-anchor="middle" font-family="monospace" font-size="${fs_slit}" font-weight="bold" fill="#e94560">${s.pairId}</text>\n`;
     }
   });
 
